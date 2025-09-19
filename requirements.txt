@@ -1,0 +1,4 @@
+typer==0.17.4
+rich>=13
+PyYAML>=6.0.1
+textual>=6.0.0
