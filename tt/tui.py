@@ -123,6 +123,7 @@ class TTApp(App):
     def on_mount(self) -> None:
         self._setup_tables()
         self.refresh_data()
+        self.title = "tt — Task & Time Tracker"
 
     def _setup_tables(self) -> None:
         t = self.query_one("#tasks", DataTable)

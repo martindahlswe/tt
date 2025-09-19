@@ -390,24 +390,107 @@ app.add_typer(log_app, name="log")
 @log_app.command("ls")
 def log_ls(
     ctx: typer.Context,
-    task_id: int,
-    since: str = typer.Option(None, "--since"),
-    until: str = typer.Option(None, "--until"),
+    task_id: Optional[int] = typer.Argument(None, help="Task ID; omit and use --all to list across tasks"),
+    since: Optional[str] = typer.Option(None, "--since", help="Filter: start >= ISO (e.g. 2025-09-01)"),
+    until: Optional[str] = typer.Option(None, "--until", help="Filter: end <= ISO"),
+    all: bool = typer.Option(False, "--all", help="List logs across all tasks"),
+    order: str = typer.Option("desc", "--order", help="Sort by start time", case_sensitive=False),
+    limit: Optional[int] = typer.Option(None, "--limit", help="Limit number of rows"),
+    grouped: bool = typer.Option(False, "--grouped", help="Group by task (only makes sense with --all)"),
+    csv: bool = typer.Option(False, "--csv", help="CSV output"),
+    json_out: bool = typer.Option(False, "--json", help="JSON output"),
 ):
-    """List time entries for a task (with entry IDs), optionally within a window."""
-    s, u = tparse.window(since, until)
+    """
+    List time entries. Either provide TASK_ID or use --all.
+    Supports --since/--until filters (ISO strings), --order asc|desc, --limit,
+    --grouped (for --all), and --csv/--json outputs.
+    """
     used_db = ctx.obj.db_path
-    rows = logs.entries_with_durations(task_id, used_db)
-    table = Table(box=box.SIMPLE_HEAVY)
-    table.add_column("ID", justify="right"); table.add_column("Start"); table.add_column("End"); table.add_column("Min", justify="right"); table.add_column("Note")
-    for eid, start_s, end_s, note, mins in rows:
-        if s or u:
-            sec = logs._overlap_seconds(start_s, end_s, s, u)
-            mins = logs._round_seconds_to_minutes(sec) if sec > 0 else 0
-            if mins <= 0: continue
-        table.add_row(str(eid), start_s, end_s or "(running)", str(mins), note or "")
-    console.print(table)
+    s, u = tparse.window(since, until)
 
+    # Resolve task IDs
+    tids: List[int]
+    if all:
+        trows = tasks.list_tasks(db_path=used_db, include_archived=True)
+        tids = [int(r[0]) for r in trows]
+    else:
+        if task_id is None:
+            console.print("[red]Provide a TASK_ID or use --all[/red]")
+            raise typer.Exit(2)
+        tids = [int(task_id)]
+
+    # Collect rows: (entry_id, task_id, start, end, note, minutes)
+    rows: List[Tuple[int, int, str, str, Optional[str], int]] = []
+    for tid in tids:
+        for eid, start_s, end_s, note, mins in logs.entries_with_durations(tid, used_db):
+            # Window filtering / recompute minutes based on overlap if a window is provided
+            if s or u:
+                sec = logs._overlap_seconds(start_s, end_s, s, u)
+                m2 = logs._round_seconds_to_minutes(sec) if sec > 0 else 0
+                if m2 <= 0:
+                    continue
+                mins = m2
+            rows.append((int(eid), tid, start_s or "", end_s or "", note, int(mins or 0)))
+
+    # Sort
+    ord_lower = (order or "desc").lower()
+    if ord_lower not in ("asc", "desc"):
+        ord_lower = "desc"
+    rows.sort(key=lambda r: (r[2] or "", r[0]), reverse=(ord_lower == "desc"))
+
+    # Limit
+    if limit is not None:
+        rows = rows[: int(limit)]
+
+    # CSV / JSON
+    if csv:
+        import csv as _csv
+        writer = _csv.writer(sys.stdout)
+        writer.writerow(["id", "task_id", "start", "end", "minutes", "note"])
+        for eid, tid, start, end, note, minutes in rows:
+            writer.writerow([eid, tid, start, end, minutes, note or ""])
+        return
+    if json_out:
+        print(json.dumps(
+            [
+                {"id": eid, "task_id": tid, "start": start, "end": end, "minutes": minutes, "note": note}
+                for (eid, tid, start, end, note, minutes) in rows
+            ],
+            indent=2,
+        ))
+        return
+
+    # Pretty table
+    if grouped and all:
+        by_task: Dict[int, List[Tuple[int, str, str, Optional[str], int]]] = {}
+        for eid, tid, start, end, note, minutes in rows:
+            by_task.setdefault(tid, []).append((eid, start, end, note, minutes))
+        for tid, logs_ in sorted(by_task.items(), key=lambda kv: kv[0], reverse=True):
+            title = tasks.get_title(tid, used_db) or f"(task {tid})"
+            total = sum(m for _eid, _s, _e, _n, m in logs_)
+            console.print(f"\n[bold]Task {tid}:[/bold] {title} — total {fmt_minutes(total)}")
+            table = Table(box=box.SIMPLE_HEAVY)
+            table.add_column("ID", justify="right")
+            table.add_column("Start")
+            table.add_column("End")
+            table.add_column("Min", justify="right")
+            table.add_column("Note")
+            for eid, start, end, note, minutes in logs_:
+                table.add_row(str(eid), start, end or "(running)", str(minutes), (note or "")[:80])
+            console.print(table)
+        return
+    else:
+        table = Table(box=box.SIMPLE_HEAVY)
+        table.add_column("ID", justify="right")
+        table.add_column("Task", justify="right")
+        table.add_column("Start")
+        table.add_column("End")
+        table.add_column("Min", justify="right")
+        table.add_column("Note")
+        for eid, tid, start, end, note, minutes in rows:
+            table.add_row(str(eid), str(tid), start, end or "(running)", str(minutes), (note or "")[:80])
+        console.print(table)
+        return
 @log_app.command("add")
 def log_add(
     ctx: typer.Context,
