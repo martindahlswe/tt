@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.build/
+dist/
+build/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Envs
+.env
+.venv
+venv/
+.venv*/
+.env*/
+
+# OS
+.DS_Store
+
+# SQLite / app data
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor
+.idea/
+.vscode/
+
