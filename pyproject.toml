@@ -35,7 +35,9 @@ packages = ["tt"]
 version_toml = ["pyproject.toml:project.version"]
 branch = "main"
 changelog_file = "CHANGELOG.md"
-build_command = "python -m build"
+# Ensure build tools are present, then build
+build_command = "python -m pip install -U build hatchling && python -m build"
 upload_to_pypi = false
 tag_format = "v{version}"
 commit_parser = "angular"
+
