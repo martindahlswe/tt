@@ -1,6 +1,11 @@
 # tt/cli.py
 from __future__ import annotations
 import json
+import typing
+import os
+import platform
+import subprocess
+from datetime import datetime, timedelta
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
@@ -15,11 +20,118 @@ from . import timeparse as tparse
 from . import tasks
 from . import time_entries as logs
 from .tui import run_tui
-from .pomodoro import run_pomodoro, parse_pom_config
 
 console = Console()
 # Show help when no args; disable shell-completion noise
-app = typer.Typer(help="Tiny tasks + time tracker", add_completion=False, no_args_is_help=True)
+app = typer.Typer(add_completion=False, no_args_is_help=True)
+app.info.help = "Tiny tasks + time tracker (CLI + TUI). Run `tt init` once; see `tt examples` for working commands."
+
+def _version_callback(value: bool):
+    if value:
+        try:
+            from importlib.metadata import version, PackageNotFoundError  # type: ignore
+            v = version("tt")
+        except Exception:
+            v = "0.0.0+local"
+        typer.echo(f"tt {v}")
+        raise typer.Exit()
+
+@app.callback()
+def _main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Show version and exit.",
+        is_eager=True,
+        callback=_version_callback,
+    ),
+):
+    """Top-level command options. Run with no args to see help."""
+    if getattr(ctx, "obj", None) is None:
+        class _Obj: ...
+        ctx.obj = _Obj()
+
+# Enhanced help text
+
+
+
+@app.command("examples")
+def show_examples():
+    """Show common usage examples."""
+    from rich.console import Console
+    from rich.panel import Panel
+
+    examples_text = """[bold cyan]Examples:[/bold cyan]
+
+• First-time setup:
+  [green]tt init[/green]
+
+• Create a task and list tasks (note the ID in the first column):
+  [green]tt task add "Finances"[/green]
+  [green]tt task ls[/green]
+
+• Start/stop timing (replace 1 with the ID you saw in 'task ls'):
+  [green]tt start 1[/green]
+  [green]tt stop[/green]
+
+• Add a manual log (positional TASK_ID, not --task):
+  [green]tt log add 1 --start "2025-09-20 09:00" --end "2025-09-20 10:15"[/green]
+  [green]tt log add 1 --minutes 30[/green]
+  [green]tt log add 1 --ago 90m[/green]
+
+• Show logs:
+  [green]tt log ls 1 --week[/green]        # for one task, this week
+  [green]tt log ls --all --week[/green]    # across all tasks
+
+• Summaries:
+  [green]tt report --group day --since week[/green]
+
+• Config helpers:
+  [green]tt config validate[/green]
+  [green]tt config path[/green]
+
+• Launch the TUI:
+  [green]tt tui[/green]
+"""
+    Console().print(Panel(examples_text, title="tt Examples", expand=False))
+
+config_app = typer.Typer(help="Config utilities")
+
+@config_app.command("validate")
+def config_validate_cmd():
+    """Validate config keys and show merged defaults."""
+    cfg = cfgmod.load()
+    allowed = {"db", "rounding", "default_status", "list"}
+    list_allowed = {"compact", "limit"}
+    unknown = [k for k in cfg.keys() if k not in allowed]
+    list_unknown = [k for k in (cfg.get("list") or {}).keys() if k not in list_allowed]
+    if unknown or list_unknown:
+        console.print("[yellow]Unknown keys:[/yellow] " + ", ".join(unknown + [f"list.{k}" for k in list_unknown]))
+    console.print_json(data=cfg)
+
+@config_app.command("path")
+def config_path_cmd():
+    """Print resolved XDG config path."""
+    print(cfgmod.xdg_config_path())
+
+@config_app.command("edit")
+def config_edit_cmd():
+    """Open config in $EDITOR (or default editor on macOS). Creates file if missing."""
+    path = cfgmod.xdg_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        cfgmod.write_yaml_config(path, cfgmod.load())
+    editor = (os.environ.get("EDITOR") or "").strip()
+    if platform.system() == "Darwin" and not editor:
+        # open in default text editor (TextEdit) via 'open -t'
+        subprocess.run(["open", "-t", str(path)])
+    elif editor:
+        subprocess.run([editor, str(path)])
+    else:
+        # fall back to vi
+        subprocess.run(["vi", str(path)])
+
 
 # ---------- global context & config ----------
 
@@ -46,6 +158,7 @@ def _load_ctx(db_opt: Optional[Path]) -> Ctx:
     return ctx
 
 @app.callback(invoke_without_command=True)
+
 def main(
     ctx: typer.Context,
     db: Path = typer.Option(None, "--db", help="DB path (from config or ~/.tt.sqlite3)"),
@@ -120,6 +233,22 @@ def init(ctx: typer.Context):
     """Initialize the database file and tables."""
     used = dbmod.init(ctx.obj.db_path)
     console.print(f"[green]initialized database at[/green] {used}")
+
+    # Ensure XDG config exists at $XDG_CONFIG_HOME/tt/config.yml (or ~/.config/tt/config.yml)
+    cfg_path = _xdg_config_path()
+    if not cfg_path.exists():
+        # Build initial config using current context defaults
+        current = cfgmod.load()
+        init_cfg = {
+            "db": str(ctx.obj.db_path),
+            "rounding": (current.get("rounding") or "entry"),
+            "default_status": current.get("default_status"),
+            "list": current.get("list") or {"compact": False, "limit": None},
+        }
+        _write_yaml_config(cfg_path, init_cfg)
+        console.print(f"[green]created config at[/green] {cfg_path}")
+    else:
+        console.print(f"[yellow]config already exists at[/yellow] {cfg_path}")
 
 @app.command()
 def backup(ctx: typer.Context, out: Path = typer.Option(None, "--out", help="Write SQL dump to file (otherwise stdout)")):
@@ -224,30 +353,6 @@ def resume(ctx: typer.Context, note: str = typer.Option("", "--note", help="Over
 def tui(ctx: typer.Context):
     """Launch interactive TUI (Textual)."""
     run_tui(ctx.obj.db_path, ctx.obj.rounding)
-
-# ---------------- Pomodoro commands -----------
-
-pom_app = typer.Typer(help="Pomodoro timer")
-app.add_typer(pom_app, name="pom")
-
-@pom_app.command("start")
-def pom_start(
-    ctx: typer.Context,
-    task_id: int,
-    length: str = typer.Option("25m", "--length", help="Work length (e.g., 25m, 1h)"),
-    short_break: str = typer.Option("5m", "--short-break"),
-    long_break: str = typer.Option("15m", "--long-break"),
-    cycles: int = typer.Option(4, "--cycles", help="Number of work blocks"),
-    long_every: int = typer.Option(4, "--long-every", help="Long break every N cycles"),
-    auto_breaks: bool = typer.Option(True, "--auto-breaks/--no-auto-breaks"),
-    note_prefix: str = typer.Option("Pomodoro", "--note-prefix"),
-):
-    """
-    Runs a blocking Pomodoro session that starts/stops real logs.
-    Ctrl+C to abort; current entry will stop.
-    """
-    cfg = parse_pom_config(task_id, length, short_break, long_break, cycles, long_every, auto_breaks, note_prefix)
-    run_pomodoro(ctx.obj.db_path, cfg)
 
 # ---------- task subcommands ----------
 
@@ -386,85 +491,86 @@ def task_ls(
 
 log_app = typer.Typer(help="Time entry (log) commands")
 app.add_typer(log_app, name="log")
-
+app.add_typer(config_app, name="config")
 @log_app.command("ls")
 def log_ls(
     ctx: typer.Context,
-    task_id: Optional[int] = typer.Argument(None, help="Task ID; omit and use --all to list across tasks"),
-    since: Optional[str] = typer.Option(None, "--since", help="Filter: start >= ISO (e.g. 2025-09-01)"),
-    until: Optional[str] = typer.Option(None, "--until", help="Filter: end <= ISO"),
-    all: bool = typer.Option(False, "--all", help="List logs across all tasks"),
-    order: str = typer.Option("desc", "--order", help="Sort by start time", case_sensitive=False),
-    limit: Optional[int] = typer.Option(None, "--limit", help="Limit number of rows"),
-    grouped: bool = typer.Option(False, "--grouped", help="Group by task (only makes sense with --all)"),
-    csv: bool = typer.Option(False, "--csv", help="CSV output"),
+    task_id: typing.Optional[int] = typer.Argument(None, help="Task ID to list logs for"),
+    all_tasks: bool = typer.Option(False, "--all", help="Show logs across all tasks"),
+    since: typing.Optional[str] = typer.Option(None, "--since", help="Filter: start >= ISO (e.g. 2025-09-01)"),
+    until: typing.Optional[str] = typer.Option(None, "--until", help="Filter: end <= ISO"),
+    grouped: bool = typer.Option(False, "--grouped", help="Group by task (only with --all)"),
+    csv_out: bool = typer.Option(False, "--csv", help="CSV output"),
     json_out: bool = typer.Option(False, "--json", help="JSON output"),
+    today: bool = typer.Option(False, "--today", help="Only logs from today"),
+    week: bool = typer.Option(False, "--week", help="Only logs from the current week (Mon–Sun)"),
+    running: bool = typer.Option(False, "--running", help="Only running entries (no end)"),
 ):
     """
-    List time entries. Either provide TASK_ID or use --all.
-    Supports --since/--until filters (ISO strings), --order asc|desc, --limit,
-    --grouped (for --all), and --csv/--json outputs.
+    List logs. Either provide TASK_ID or use --all.
     """
     used_db = ctx.obj.db_path
-    s, u = tparse.window(since, until)
 
-    # Resolve task IDs
-    tids: List[int]
-    if all:
-        trows = tasks.list_tasks(db_path=used_db, include_archived=True)
-        tids = [int(r[0]) for r in trows]
-    else:
-        if task_id is None:
-            console.print("[red]Provide a TASK_ID or use --all[/red]")
-            raise typer.Exit(2)
+    # Determine task ids
+    if all_tasks:
+        task_rows = tasks.list_tasks(db_path=used_db, include_archived=True)
+        tids = [int(r[0]) for r in task_rows]
+    elif task_id is not None:
         tids = [int(task_id)]
+    else:
+        console.print("[red]Error:[/red] provide TASK_ID or use --all")
+        raise typer.Exit(2)
 
-    # Collect rows: (entry_id, task_id, start, end, note, minutes)
-    rows: List[Tuple[int, int, str, str, Optional[str], int]] = []
+    # Compute window
+    s, u = tparse.window(since, until)
+    if today and not since and not until:
+        now = datetime.now()
+        s = now.strftime("%Y-%m-%dT00:00:00")
+        u = now.strftime("%Y-%m-%dT23:59:59")
+    if week and not since and not until:
+        now = datetime.now()
+        start_w = now - timedelta(days=now.weekday())
+        end_w = start_w + timedelta(days=6)
+        s = start_w.strftime("%Y-%m-%dT00:00:00")
+        u = end_w.strftime("%Y-%m-%dT23:59:59")
+
+    # Collect rows
+    rows = []  # (eid, tid, start, end, note, minutes)
     for tid in tids:
         for eid, start_s, end_s, note, mins in logs.entries_with_durations(tid, used_db):
-            # Window filtering / recompute minutes based on overlap if a window is provided
+            if running and (end_s or ""):
+                continue
+            # Apply window overlap if set
             if s or u:
                 sec = logs._overlap_seconds(start_s, end_s, s, u)
                 m2 = logs._round_seconds_to_minutes(sec) if sec > 0 else 0
                 if m2 <= 0:
                     continue
                 mins = m2
-            rows.append((int(eid), tid, start_s or "", end_s or "", note, int(mins or 0)))
+            rows.append((int(eid), int(tid), start_s or "", end_s or "", note, int(mins or 0)))
 
-    # Sort
-    ord_lower = (order or "desc").lower()
-    if ord_lower not in ("asc", "desc"):
-        ord_lower = "desc"
-    rows.sort(key=lambda r: (r[2] or "", r[0]), reverse=(ord_lower == "desc"))
-
-    # Limit
-    if limit is not None:
-        rows = rows[: int(limit)]
-
-    # CSV / JSON
-    if csv:
+    # Output
+    if csv_out:
         import csv as _csv
-        writer = _csv.writer(sys.stdout)
-        writer.writerow(["id", "task_id", "start", "end", "minutes", "note"])
-        for eid, tid, start, end, note, minutes in rows:
-            writer.writerow([eid, tid, start, end, minutes, note or ""])
-        return
-    if json_out:
-        print(json.dumps(
-            [
-                {"id": eid, "task_id": tid, "start": start, "end": end, "minutes": minutes, "note": note}
-                for (eid, tid, start, end, note, minutes) in rows
-            ],
-            indent=2,
-        ))
+        w = _csv.writer(sys.stdout)
+        w.writerow(["id", "task_id", "start", "end", "minutes", "note"])
+        for eid, tid, start_s, end_s, note, mins in rows:
+            w.writerow([eid, tid, start_s, end_s, mins, note or ""])
         return
 
-    # Pretty table
-    if grouped and all:
-        by_task: Dict[int, List[Tuple[int, str, str, Optional[str], int]]] = {}
-        for eid, tid, start, end, note, minutes in rows:
-            by_task.setdefault(tid, []).append((eid, start, end, note, minutes))
+    if json_out:
+        import json as _json
+        print(_json.dumps([
+            {"id": eid, "task_id": tid, "start": s, "end": e, "minutes": mins, "note": note}
+            for (eid, tid, s, e, note, mins) in rows
+        ], indent=2))
+        return
+
+    # Pretty rich table
+    if grouped and all_tasks:
+        by_task = {}
+        for eid, tid, s1, e1, note, mins in rows:
+            by_task.setdefault(tid, []).append((eid, s1, e1, note, mins))
         for tid, logs_ in sorted(by_task.items(), key=lambda kv: kv[0], reverse=True):
             title = tasks.get_title(tid, used_db) or f"(task {tid})"
             total = sum(m for _eid, _s, _e, _n, m in logs_)
@@ -475,8 +581,8 @@ def log_ls(
             table.add_column("End")
             table.add_column("Min", justify="right")
             table.add_column("Note")
-            for eid, start, end, note, minutes in logs_:
-                table.add_row(str(eid), start, end or "(running)", str(minutes), (note or "")[:80])
+            for eid, s1, e1, note, mins in logs_:
+                table.add_row(str(eid), s1, e1 or "(running)", str(mins), (note or "")[:80])
             console.print(table)
         return
     else:
@@ -487,8 +593,8 @@ def log_ls(
         table.add_column("End")
         table.add_column("Min", justify="right")
         table.add_column("Note")
-        for eid, tid, start, end, note, minutes in rows:
-            table.add_row(str(eid), str(tid), start, end or "(running)", str(minutes), (note or "")[:80])
+        for eid, tid, s1, e1, note, mins in rows:
+            table.add_row(str(eid), str(tid), s1, e1 or "(running)", str(mins), (note or "")[:80])
         console.print(table)
         return
 @log_app.command("add")
