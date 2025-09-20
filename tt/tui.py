@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from . import config as cfgmod
+
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, DataTable, Static, Input
 from textual.containers import Horizontal, Vertical
@@ -25,6 +27,11 @@ HELP_TEXT = """[b]Keys[/b]
   t           : toggle compact
   Esc         : cancel current inline edit
   q           : quit
+
+
+[o] Cycle sort (start/end/minutes)
+[v] Mark/unmark log  •  [U] Bulk delete  •  [M] Bulk minutes adjust
+[T] Toggle theme
 """
 
 
@@ -34,11 +41,80 @@ class StatusBar(Static):
 
 
 class TTApp(App):
+    # ------------- state persistence -------------
+    def _state_path(self) -> Path:
+        try:
+            cfg_dir = cfgmod.config_path().parent
+        except Exception:
+            cfg_dir = Path.home() / ".config" / "tt"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        return cfg_dir / "tui_state.json"
+
+    def _save_state(self) -> None:
+        """Persist lightweight UI state; safe even if widgets are already unmounted."""
+        try:
+            try:
+                sel_task = self._get_selected_task_id()
+            except Exception:
+                sel_task = None
+            try:
+                sel_entry = self._get_selected_entry_id()
+            except Exception:
+                sel_entry = None
+
+            st = {
+                "focus": self.focus_where,
+                "compact": self.compact,
+                "log_sort_key": self._log_sort_key,
+                "log_filter": self._log_filter,
+                "selected_task_id": sel_task,
+                "selected_entry_id": sel_entry,
+            }
+            self._state_path().write_text(json.dumps(st), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _load_state(self) -> dict:
+        try:
+            data = json.loads(self._state_path().read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return {}
+            return data
+        except Exception:
+            return {}
+
+    def _set_selected_task_id(self, task_id: int | None) -> None:
+        if task_id is None:
+            return
+        t = self.query_one("#tasks", DataTable)
+        try:
+            row = self._task_row_ids.index(task_id)
+        except ValueError:
+            return
+        try:
+            t.cursor_coordinate = (row, 0)
+        except Exception:
+            pass
+
+    def _set_selected_entry_id(self, entry_id: int | None) -> None:
+        if entry_id is None:
+            return
+        e = self.query_one("#entries", DataTable)
+        try:
+            row = self._entry_row_ids.index(entry_id)
+        except ValueError:
+            return
+        try:
+            e.cursor_coordinate = (row, 0)
+        except Exception:
+            pass
+
     CSS = """
     Screen { layout: vertical; }
     #tables { layout: horizontal; }
     #left, #right { width: 1fr; }
     #status { height: 3; }
+    #filterbar { height: 1; content-align: left middle; padding: 0 1; color: $text; background: $boost; }
 
     /* Make active edit step visually obvious */
     .inline-banner {
@@ -55,6 +131,14 @@ class TTApp(App):
         background: $boost;
         text-style: bold;
     }
+    .overlay {
+        layer: overlay;
+        background: $panel 80%;
+        width: 100%;
+        height: 100%;
+        content-align: left top;
+        padding: 2 3;
+    }
     """
 
     BINDINGS = [
@@ -63,6 +147,13 @@ class TTApp(App):
         Binding("t", "toggle_compact", "Compact", priority=True),
         Binding("tab", "toggle_focus", "Focus", priority=True),
         Binding("escape", "cancel_inline", "Cancel", priority=True),
+        Binding("slash", "filter_logs", "Filter", priority=True),
+        Binding("question_mark", "toggle_help", "Help", priority=True),
+        Binding("o", "cycle_sort", "Sort", priority=True),
+        Binding("v", "toggle_mark", "Mark", priority=True),
+        Binding("U", "bulk_delete", "Bulk Del", priority=True),
+        Binding("M", "bulk_minutes", "Bulk Min", priority=True),
+        Binding("T", "toggle_theme", "Theme", priority=True),
 
         Binding("a", "add", "Add", priority=True),
         Binding("e", "edit", "Edit", priority=True),
@@ -90,6 +181,15 @@ class TTApp(App):
         self.rounding = rounding
         self.focus_where: str = "tasks"  # or "entries"
         self.compact: bool = True
+        self._confirm_bulk: bool = True
+        try:
+            _cfg = cfgmod.load()
+            self._confirm_bulk = bool((_cfg.get('confirmations') or {}).get('bulk_delete', True))
+            lst = _cfg.get('list', {}) or {}
+            if 'compact' in lst:
+                self.compact = bool(lst.get('compact'))
+        except Exception:
+            pass
 
         self._task_row_ids: List[int] = []
         self._entry_row_ids: List[int] = []
@@ -103,6 +203,12 @@ class TTApp(App):
         self._edit_buf: Dict[str, Any] = {"start": None, "end": None, "minutes": None, "note": None}
         self._edit_orig: Dict[str, Any] = {"start": None, "end": None, "minutes": None, "note": None}
         self._edit_changed: Dict[str, bool] = {"start": False, "end": False, "minutes": False, "note": False}
+        self._log_sort_key: str = "start"
+        self._marked_entries: set[int] = set()
+        self._undo: list[tuple[str, dict]] = []  # (op, details)
+
+        # Logs filter (note contains)
+        self._log_filter: str = ""
 
         self.status = StatusBar(HELP_TEXT, id="status")
 
@@ -110,6 +216,7 @@ class TTApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("", id="filterbar")
         with Horizontal(id="tables"):
             with Vertical(id="left"):
                 yield Static("Tasks", id="ltitle")
@@ -121,10 +228,39 @@ class TTApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Build tables and initial data
         self._setup_tables()
         self.refresh_data()
+
+        # Restore persisted UI state
+        st = self._load_state()
+        if st:
+            self.compact = bool(st.get('compact', self.compact))
+            self._log_sort_key = st.get('log_sort_key', self._log_sort_key)
+            self._log_filter = st.get('log_filter', self._log_filter)
+
+        # Apply selection and focus
+        self._set_selected_task_id((st or {}).get('selected_task_id'))
+        self._load_entries_for_selected()
+        self._update_filter_indicator()
+        self._set_selected_entry_id((st or {}).get('selected_entry_id'))
+        self.focus_where = (st or {}).get('focus', self.focus_where)
+        if self.focus_where == 'entries':
+            try:
+                self.query_one('#entries', DataTable).focus()
+            except Exception:
+                pass
+        else:
+            try:
+                self.query_one('#tasks', DataTable).focus()
+            except Exception:
+                pass
+
         self.title = "tt — Task & Time Tracker"
 
+    def on_unmount(self) -> None:
+        # Save UI state on exit
+        self._save_state()
     def _setup_tables(self) -> None:
         t = self.query_one("#tasks", DataTable)
         e = self.query_one("#entries", DataTable)
@@ -155,11 +291,27 @@ class TTApp(App):
 
     # -------------------- data loading --------------------
 
-    def refresh_data(self) -> None:
-        self._clear_inline_ui()
-        self._load_tasks()
-        self._load_entries_for_selected()
+    
 
+    def _update_filter_indicator(self) -> None:
+        try:
+            fb = self.query_one("#filterbar", Static)
+        except Exception:
+            return
+        parts = []
+        if (self._log_filter or "").strip():
+            parts.append(f"[b]Filter[/b]: note contains '{self._log_filter.strip()}'")
+        parts.append(f"[b]Sort[/b]: {self._log_sort_key}")
+        if self._marked_entries:
+            parts.append(f"[b]Marked[/b]: {len(self._marked_entries)}")
+        fb.update("  |  ".join(parts) if parts else "")
+
+    def refresh_data(self) -> None:
+            self._clear_inline_ui()
+            self._load_tasks()
+            self._load_entries_for_selected()
+            self._update_filter_indicator()
+    
     def _load_tasks(self) -> None:
         t = self.query_one("#tasks", DataTable)
         t.clear()
@@ -182,6 +334,7 @@ class TTApp(App):
                 pass
             self._select_first_row(t)
             self._load_entries_for_selected()
+        self._update_filter_indicator()
 
     def _load_entries_for_selected(self) -> None:
         t = self.query_one("#tasks", DataTable)
@@ -195,8 +348,22 @@ class TTApp(App):
             return
 
         total = 0
+        flt = (self._log_filter or "").lower()
+        rows_tmp = []
         for eid, start, end, note, minutes in logs.entries_with_durations(task_id, self.db_path):
+            if flt and flt not in (note or '').lower():
+                continue
             m = int(minutes or 0)
+            rows_tmp.append((int(eid), start or '', end or '', note or '', m))
+        # sort
+        key = self._log_sort_key
+        if key == 'start':
+            rows_tmp.sort(key=lambda r: (r[1], r[0]))
+        elif key == 'end':
+            rows_tmp.sort(key=lambda r: (r[2] or '', r[0]))
+        else:
+            rows_tmp.sort(key=lambda r: (r[4], r[0]), reverse=True)
+        for eid, start, end, note, m in rows_tmp:
             total += m
             e.add_row(str(eid), start or "", end or "", note or "", f"{m}")
             self._entry_row_ids.append(int(eid))
@@ -204,7 +371,7 @@ class TTApp(App):
         if e.row_count:
             self._select_first_row(e)
 
-        self.query_one("#rtitle", Static).update(f"Logs — total: {total}m")
+        self.query_one("#rtitle", Static).update(f"Logs — total: {total}m" + (f" — filter: {self._log_filter}" if self._log_filter else ""))
 
     def _get_selected_task_id(self) -> Optional[int]:
         t = self.query_one("#tasks", DataTable)
@@ -274,11 +441,78 @@ class TTApp(App):
 
     # -------------------- actions --------------------
 
+    def action_toggle_theme(self) -> None:
+        self.dark = not self.dark
+
+    def action_cycle_sort(self) -> None:
+        order = ["start", "end", "minutes"]
+        try:
+            idx = order.index(self._log_sort_key)
+        except ValueError:
+            idx = 0
+        self._log_sort_key = order[(idx + 1) % len(order)]
+        self.status.set_message(f"Sort by: {self._log_sort_key}")
+        self._load_entries_for_selected()
+        self._update_filter_indicator()
+
+    def action_toggle_mark(self) -> None:
+        e = self.query_one("#entries", DataTable)
+        if not e.row_count:
+            return
+        row = e.cursor_row
+        if row is None or row < 0:
+            return
+        eid = self._entry_row_ids[row]
+        if eid in self._marked_entries:
+            self._marked_entries.remove(eid)
+            e.set_row_label(row, "")
+        else:
+            self._marked_entries.add(eid)
+            e.set_row_label(row, "●")
+        self.status.set_message(f"Marked: {len(self._marked_entries)}")
+        self._update_filter_indicator()
+
+    def action_bulk_delete(self) -> None:
+        if not self._marked_entries:
+            self.status.set_message("[yellow]No marked entries[/yellow]")
+            return
+        # Confirm
+        self._show_edit_banner(f"Delete {len(self._marked_entries)} logs? type 'yes' to confirm")
+        self._mount_edit_input("confirm_bulk_delete", "", "yes")
+
+    def action_bulk_minutes(self) -> None:
+        if not self._marked_entries:
+            self.status.set_message("[yellow]No marked entries[/yellow]")
+            return
+        self._show_edit_banner(f"Adjust minutes for {len(self._marked_entries)} logs (e.g., +5, -2, 15)")
+        self._mount_edit_input("bulk_minutes", "", "+/-N or N")
+
+
+    def action_toggle_help(self) -> None:
+        # Toggle a simple help overlay
+        try:
+            overlay = self.query_one("#help_overlay", Static)
+            overlay.remove()
+            return
+        except Exception:
+            pass
+        text = HELP_TEXT + "\n\n[dim]Press ? again to close[/dim]"
+        self.mount(Static(text, id="help_overlay", classes="overlay"))
+
+    def action_filter_logs(self) -> None:
+        if self.focus_where != "entries":
+            return
+        self._show_edit_banner("Filter logs: NOTE CONTAINS (empty to clear)")
+        self._mount_edit_input("filter_logs", self._log_filter or "", "Note contains…")
+
+
     def action_quit(self) -> None:
+        self._save_state()
         self.exit()
 
     def action_refresh(self) -> None:
         self.refresh_data()
+        self._update_filter_indicator()
 
     def action_toggle_compact(self) -> None:
         self.compact = not self.compact
@@ -305,6 +539,7 @@ class TTApp(App):
         self.status.set_message("[yellow]Edit cancelled[/yellow]")
         # restore section title
         self._load_entries_for_selected()
+        self._update_filter_indicator()
 
     def action_add(self) -> None:
         if self.focus_where == "tasks":
@@ -467,6 +702,7 @@ class TTApp(App):
                 pass
         if self.focus_where == "tasks":
             self._load_entries_for_selected()
+        self._update_filter_indicator()
 
     def action_cursor_down(self) -> None:
         table = self.query_one("#tasks" if self.focus_where == "tasks" else "#entries", DataTable)
@@ -479,6 +715,7 @@ class TTApp(App):
                 pass
         if self.focus_where == "tasks":
             self._load_entries_for_selected()
+        self._update_filter_indicator()
 
     def _cursor_row(self, table: DataTable) -> int:
         try:
@@ -515,17 +752,83 @@ class TTApp(App):
         sender = getattr(event, "sender", None) or getattr(event, "data_table", None)
         if getattr(sender, "id", "") == "tasks":
             self._load_entries_for_selected()
+        self._update_filter_indicator()
 
     def on_data_table_row_highlighted(self, event) -> None:
         sender = getattr(event, "sender", None) or getattr(event, "data_table", None)
         if getattr(sender, "id", "") == "tasks":
             self._load_entries_for_selected()
+        self._update_filter_indicator()
 
     # -------------------- input submissions --------------------
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         ctrl = event.input
         cid = ctrl.id or ""
+
+        # ----- Confirm bulk delete -----
+        if cid == "confirm_bulk_delete":
+            ok = (ctrl.value or '').strip().lower() == 'yes'
+            ctrl.remove()
+            if not ok:
+                self.status.set_message('[yellow]Cancelled[/yellow]')
+                return
+            # perform delete
+            count = 0
+            for eid in list(self._marked_entries):
+                try:
+                    logs.delete_entry(eid, self.db_path)
+                    count += 1
+                except Exception:
+                    pass
+                self._marked_entries.discard(eid)
+            self.status.set_message(f'[green]Deleted {count} logs[/green]')
+            self._load_entries_for_selected()
+            self._update_filter_indicator()
+            return
+
+        # ----- Bulk minutes -----
+        if cid == "bulk_minutes":
+            delta = (ctrl.value or '').strip()
+            ctrl.remove()
+            if not delta:
+                self.status.set_message('[yellow]Cancelled[/yellow]')
+                return
+            adj = 0
+            try:
+                if delta.startswith(('+','-')):
+                    adj = int(delta)
+                else:
+                    adj = int(delta)  # absolute set
+            except Exception:
+                self.status.set_message('[red]Invalid number[/red]')
+                return
+            count = 0
+            for eid in list(self._marked_entries):
+                try:
+                    row = logs.get_entry(eid, self.db_path)
+                    minutes = int(row[4] or 0)
+                    newm = max(0, minutes + adj) if delta.startswith(('+','-')) else max(0, int(delta))
+                    logs.edit_entry(eid, self.db_path, minutes=newm)
+                    count += 1
+                except Exception:
+                    pass
+            self.status.set_message(f'[green]Updated {count} logs[/green]')
+            self._load_entries_for_selected()
+            self._update_filter_indicator()
+            return
+
+        # ----- Filter logs -----
+        if cid == "filter_logs":
+            self._log_filter = (ctrl.value or "").strip()
+            ctrl.remove()
+            if self._log_filter:
+                self.status.set_message(f"[blue]Filter:[/blue] {self._log_filter}")
+            else:
+                self.status.set_message("[yellow]Filter cleared[/yellow]")
+            self._load_entries_for_selected()
+            self._update_filter_indicator()
+            return
 
         # ----- Add task -----
         if cid == "new_title":

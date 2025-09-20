@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Iterable
 from datetime import datetime, timedelta
 from .db import connect, now_iso, DEFAULT_DB
+from . import timeparse as tparse
 
 # ---------- note + status helpers ----------
 
@@ -26,13 +27,7 @@ def _now_local() -> datetime:
     return datetime.now().astimezone()
 
 def _parse_local_datetime(s: str) -> datetime:
-    s = s.strip()
-    if " " in s and "T" not in s:
-        s = s.replace(" ", "T")
-    dt = datetime.fromisoformat(s)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_now_local().tzinfo)
-    return dt.astimezone()
+    return tparse.parse_dt(s)
 
 def _overlap_seconds(start_s: str, end_s: Optional[str], win_start: Optional[datetime], win_end: Optional[datetime]) -> int:
     start = datetime.fromisoformat(start_s)
@@ -339,6 +334,43 @@ def trim_entry(entry_id: int, new_start: Optional[str], new_end: Optional[str], 
 # ---------- duration parsing ----------
 
 def _parse_duration_to_minutes(s: str) -> int:
+    s = (s or '').strip().lower()
+    # Accept ':30' style shorthand → 30 minutes
+    if s.startswith(':') and s[1:].isdigit():
+        val = int(s[1:])
+        if val <= 0:
+            raise ValueError('duration must be > 0 minutes')
+        return val
+    if s.isdigit():
+        val = int(s)
+        if val <= 0:
+            raise ValueError('duration must be > 0 minutes')
+        return val
+    num = ''
+    days = hours = mins = 0
+    for ch in s:
+        if ch.isdigit():
+            num += ch
+            continue
+        if ch in ('d', 'h', 'm'):
+            if not num:
+                raise ValueError(f"missing number before {ch} in {s!r}")
+            val = int(num); num = ''
+            if ch == 'd': days += val
+            elif ch == 'h': hours += val
+            else: mins += val
+        elif ch.isspace():
+            continue
+        else:
+            raise ValueError(f"invalid char {ch!r} in duration {s!r}")
+    if num:
+        # Trailing number without unit → minutes
+        mins += int(num)
+    total = days*24*60 + hours*60 + mins
+    if total <= 0:
+        raise ValueError('duration must be > 0 minutes')
+    return total
+
     s = s.strip().lower()
     if s.isdigit():
         val = int(s)

@@ -46,9 +46,22 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 """
 
 def connect(db_path: Path = DEFAULT_DB) -> sqlite3.Connection:
-    """Bare connection with FK enforcement."""
+    """Bare connection with FK enforcement + WAL and helpful indexes."""
     conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON;")
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA journal_mode = WAL;")
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_time_task ON time_entries(task_id);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_time_start ON time_entries(start);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);")
+    except Exception:
+        pass
     return conn
 
 def init(db_path: Path = DEFAULT_DB) -> Path:
