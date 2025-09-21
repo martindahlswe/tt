@@ -5,6 +5,7 @@ import os
 import platform
 import subprocess
 from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 import typer
@@ -196,6 +197,7 @@ def _print_tasks_table(
         tid, title, st, created, completed, archived_at, prio, due, est, billable = r
         total_m = totals_map.get(tid, 0)
         bill = "✓" if billable else "•"
+
         # main task row
         table.add_row(
             str(tid),
@@ -207,18 +209,24 @@ def _print_tasks_table(
             bill,
             fmt_minutes(total_m),
         )
+
         # optional tags row
         if show_tags:
             tg = tasks.list_tags(tid, db_path)
             if tg:
                 table.add_row("", f"[dim]tags: {', '.join(tg)}[/dim]", "", "", "", "", "", "")
+
         # per-entry bullets INSIDE the table
         if entries_map is not None:
-            for note, m in entries_map.get(tid, []):
-                if m <= 0:
-                    continue
-                label = (note or "").strip() or "(no note)"
-                table.add_row("", f"[dim]  - {label} - {fmt_minutes(m)}[/dim]", "", "", "", "", "", "")
+            value = entries_map.get(tid, [])
+            if isinstance(value, list):
+                for note, m in value:
+                    if m <= 0:
+                        continue
+                    label = (note or "").strip() or "(no note)"
+                    table.add_row("", f"[dim]  - {label} - {fmt_minutes(m)}[/dim]", "", "", "", "", "", "")
+            elif isinstance(value, int) and value > 0:
+                table.add_row("", f"[dim]{fmt_minutes(value)} tracked[/dim]", "", "", "", "", "", "")
 
     console.print(table)
 
@@ -742,6 +750,8 @@ def report(
         table.add_row(k, str(m))
     console.print(table)
 
+@app.command()
+@app.command()
 @app.command()
 def export(
     ctx: typer.Context,
