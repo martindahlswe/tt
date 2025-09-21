@@ -171,4 +171,4 @@ MIT © [Martin Dahl](https://github.com/martindahlswe)
 ## 📌 Links
 
 - Repo: [https://github.com/martindahlswe/ttx-cli](https://github.com/martindahlswe/ttx-cli)
-- Issues: [https://github.com/martindahlswe/ttx-clix-cli/issues](https://github.com/martindahlswe/ttx-clix-cli/issues)
+- Issues: [https://github.com/martindahlswe/ttx-cli/issues](https://github.com/martindahlswe/ttx-cli/issues)
