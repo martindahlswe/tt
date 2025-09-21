@@ -288,6 +288,26 @@ class TTApp(App):
 
     
 
+    def _select_task_by_id(self, task_id: int) -> bool:
+        """Select the task row matching task_id. Returns True on success."""
+        t = self.query_one("#tasks", DataTable)
+        if not self._task_row_ids:
+            return False
+        try:
+            idx = self._task_row_ids.index(int(task_id))
+        except ValueError:
+            return False
+        # try coordinate API first, fall back to row
+        try:
+            t.cursor_coordinate = (idx, 0)
+        except Exception:
+            try:
+                t.cursor_row = idx
+            except Exception:
+                return False
+        return True
+
+
     def _update_filter_indicator(self) -> None:
         try:
             fb = self.query_one("#filterbar", Static)
@@ -301,12 +321,25 @@ class TTApp(App):
             parts.append(f"[b]Marked[/b]: {len(self._marked_entries)}")
         fb.update("  |  ".join(parts) if parts else "")
 
-    def refresh_data(self) -> None:
-            self._clear_inline_ui()
-            self._load_tasks()
-            self._load_entries_for_selected()
-            self._update_filter_indicator()
     
+    def refresh_data(self) -> None:
+        # Preserve currently selected task id (if any), then reload and restore selection.
+        prev_tid = self._get_selected_task_id()
+
+        self._clear_inline_ui()
+        self._load_tasks()
+
+        restored = False
+        if prev_tid is not None:
+            restored = self._select_task_by_id(prev_tid)
+
+        if not restored:
+            t = self.query_one("#tasks", DataTable)
+            self._select_first_row(t)
+
+        self._load_entries_for_selected()
+        self._update_filter_indicator()
+
     def _load_tasks(self) -> None:
         t = self.query_one("#tasks", DataTable)
         t.clear()
@@ -327,9 +360,6 @@ class TTApp(App):
                 t.cursor_type = "row"
             except Exception:
                 pass
-            self._select_first_row(t)
-            self._load_entries_for_selected()
-        self._update_filter_indicator()
 
     def _load_entries_for_selected(self) -> None:
         t = self.query_one("#tasks", DataTable)
