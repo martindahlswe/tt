@@ -8,8 +8,8 @@
 - Major UX & infra improvements, remove pomodoro
   ([`eab0f3f`](https://github.com/martindahlswe/tt/commit/eab0f3f746837c3376baec7c4365f440f09ff248))
 
-CLI: - Added `tt examples` command with real working examples - Improved top-level help/UX and
-  version flag - Added `tt config` subcommands: validate, path, edit - Log listing now supports
+CLI: - Added `ttx examples` command with real working examples - Improved top-level help/UX and
+  version flag - Added `ttx config` subcommands: validate, path, edit - Log listing now supports
   `--today`, `--week`, `--running`, CSV/JSON output refinements - Removed Pomodoro commands
 
 Config: - Switched to XDG-compliant config path (`~/.config/tt/config.yml`) - Added helpers to

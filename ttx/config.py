@@ -148,7 +148,7 @@ def xdg_config_home() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
 
 def xdg_config_path() -> Path:
-    """Path to tt config file."""
+    """Path to ttx config file."""
     return xdg_config_home() / "tt" / "config.yml"
 
 def write_yaml_config(path: Path, data: Dict[str, Any]) -> None:
