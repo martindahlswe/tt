@@ -234,3 +234,88 @@ def adjust_entry_minutes(entry_id: int, delta_minutes: int, db_path=DEFAULT_DB) 
         conn.execute("UPDATE time_entries SET end = ? WHERE id = ?", (new_end.isoformat(), entry_id))
         conn.commit()
         return True
+
+
+    if start is not None:
+        fields.append("start = ?")
+        values.append(start)
+    if end is not None:
+        fields.append("end = ?")
+        values.append(end)
+    if note is not None:
+        fields.append("note = ?")
+        values.append(note)
+
+    if not fields:
+        return
+
+    values.append(entry_id)
+    with connect(db_path) as conn:
+        conn.execute(f"UPDATE time_entries SET {', '.join(fields)} WHERE id = ?", values)
+
+
+    if minutes is not None:
+        with connect(db_path) as conn:
+            row = conn.execute("SELECT start FROM time_entries WHERE id = ?", (entry_id,)).fetchone()
+            if not row:
+                raise ValueError(f"Time entry {entry_id} not found")
+            start_dt = datetime.fromisoformat(row[0])
+            end_dt = start_dt + timedelta(minutes=minutes)
+            end = end_dt.isoformat()
+
+    if start is not None:
+        fields.append("start = ?")
+        values.append(start)
+    if end is not None:
+        fields.append("end = ?")
+        values.append(end)
+    if note is not None:
+        fields.append("note = ?")
+        values.append(note)
+
+    if not fields:
+        return
+
+    values.append(entry_id)
+    with connect(db_path) as conn:
+        conn.execute(f"UPDATE time_entries SET {', '.join(fields)} WHERE id = ?", values)
+
+def edit_entry(entry_id: int, *args, start: Optional[str] = None, end: Optional[str] = None, note: Optional[str] = None, minutes: Optional[int] = None, db_path: Path = DEFAULT_DB) -> None:
+    """
+    Edit fields of a time entry by ID.
+
+    Usage:
+        edit_entry(123, note="New Note")
+        edit_entry(123, minutes=30)
+    """
+    if args:
+        raise TypeError("edit_entry() accepts only one positional argument (entry_id). Use keyword arguments for others.")
+
+    fields = []
+    values = []
+
+    if minutes is not None:
+        with connect(db_path) as conn:
+            row = conn.execute("SELECT start FROM time_entries WHERE id = ?", (entry_id,)).fetchone()
+            if not row:
+                raise ValueError(f"Time entry {entry_id} not found")
+            start_dt = datetime.fromisoformat(row[0])
+            end_dt = start_dt + timedelta(minutes=minutes)
+            end = end_dt.isoformat()
+
+    if start is not None:
+        fields.append("start = ?")
+        values.append(start)
+    if end is not None:
+        fields.append("end = ?")
+        values.append(end)
+    if note is not None:
+        fields.append("note = ?")
+        values.append(note)
+
+    if not fields:
+        return
+
+    values.append(entry_id)
+    with connect(db_path) as conn:
+        conn.execute(f"UPDATE time_entries SET {', '.join(fields)} WHERE id = ?", values)

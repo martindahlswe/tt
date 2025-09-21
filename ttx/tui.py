@@ -15,22 +15,18 @@ from . import time_entries as logs
 
 
 HELP_TEXT = """[b]Keys[/b]
-  Tab         : switch focus (Tasks ↔ Entries)
-  ↑/↓ or j/k  : move
-  Enter/Space : start/stop timer on selected task (Tasks focus)
-  a           : add (task or log, depends on focus)
-  e           : edit (task title or selected log; multi-step)
-  x / X       : delete task / force delete task (with confirm)
-  Del/Backspc : delete selected log (when not typing)
-  r           : refresh
-  t           : toggle compact
-  Esc         : cancel current inline edit
-  q           : quit
-
-
-[o] Cycle sort (start/end/minutes)
-[v] Mark/unmark log  •  [U] Bulk delete  •  [M] Bulk minutes adjust
-[T] Toggle theme
+  Tab: switch
+  ↑/↓ or j/k: move
+  Enter/Space: start/stop
+  a: add
+  e: edit
+  x/X: delete
+  Del/Backspace: delete log
+  r: refresh 
+  q: quit
+  t: toggle
+  o/v/U/M: sort/bulk ops
+  Esc: cancel
 """
 
 
@@ -254,7 +250,7 @@ class TTApp(App):
             except Exception:
                 pass
 
-        self.title = "tt — Task & Time Tracker"
+        self.title = "ttx — Task & Time Tracker"
 
     def on_unmount(self) -> None:
         # Save UI state on exit
@@ -807,7 +803,7 @@ class TTApp(App):
                     row = logs.get_entry(eid, self.db_path)
                     minutes = int(row[4] or 0)
                     newm = max(0, minutes + adj) if delta.startswith(('+','-')) else max(0, int(delta))
-                    logs.edit_entry(eid, self.db_path, minutes=newm)
+                    logs.edit_entry(eid, db_path=self.db_path, minutes=newm)
                     count += 1
                 except Exception:
                     pass
@@ -1066,7 +1062,7 @@ class TTApp(App):
 
             if kwargs:
                 try:
-                    logs.edit_entry(eid, self.db_path, **kwargs)
+                    logs.edit_entry(eid, db_path=self.db_path, **kwargs)
                     applied_any = True
                 except Exception as e:
                     errors.append(str(e))
@@ -1090,3 +1086,6 @@ class TTApp(App):
 def run_tui(db_path: Path, rounding: str = "entry"):
     app = TTApp(db_path=db_path, rounding=rounding)
     app.run()
+
+# Suggested CSS for styling consistency:
+# .help { background: $surface; color: $text; padding: 1; dock: bottom; }

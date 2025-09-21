@@ -1,43 +1,37 @@
 [build-system]
-requires = ["hatchling>=1.21"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "tt"
-version = "0.0.0"
-description = "Tiny tasks + time tracker (CLI + TUI)"
-readme = "README.md"
-requires-python = ">=3.10"
-license = {text = "MIT"}
-authors = [{name = "Martin"}]
-
-dependencies = [
-  "typer>=0.12.5",
-  "rich>=13.7.1",
-  "textual>=0.58.0",
-  "PyYAML>=6.0.2",
+name = "ttx-cli"
+version = "0.1.0"
+description = "Tiny tasks and time tracker"
+authors = [
+  { name="Martin Dahl", email="martindahl16@icloud.com" }
 ]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
 
 [project.optional-dependencies]
-dev = [
-  "pytest>=8.3.1",
-  "ruff>=0.5.7",
-  "mypy>=1.11.1",
-]
+dev = ["pytest", "ruff", "pyright", "textual-dev", "python-semantic-release"]
 
 [project.scripts]
-tt = "tt.cli:app"
+ttx = "ttx.cli:app"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.github",
+  "/.vscode",
+  ".*",
+  "tests",
+  "*.md"
+]
 
 [tool.hatch.build.targets.wheel]
-packages = ["tt"]
-
-[tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
-branch = "main"
-changelog_file = "CHANGELOG.md"
-# Ensure build tools are present, then build
-build_command = "python -m pip install -U build hatchling && python -m build"
-upload_to_pypi = false
-tag_format = "v{version}"
-commit_parser = "angular"
+packages = ["ttx"]
 

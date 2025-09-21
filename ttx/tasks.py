@@ -165,7 +165,7 @@ def list_tags(task_id: int, db_path: Path = DEFAULT_DB) -> List[str]:
         rows = conn.execute("""
             SELECT tg.name
             FROM tags tg
-            JOIN task_tags tt ON tt.tag_id = tg.id
+            JOIN task_tags ttx ON tt.tag_id = tg.id
             WHERE tt.task_id = ?
             ORDER BY tg.name
         """, (task_id,)).fetchall()

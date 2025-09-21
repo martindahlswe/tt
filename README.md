@@ -1,8 +1,8 @@
-# tt — Tiny Tasks + Time Tracker
+# ttx — Tiny Tasks + Time Tracker
 
-[![Release](https://github.com/martindahlswe/tt/actions/workflows/release.yml/badge.svg)](https://github.com/martindahlswe/tt/actions/workflows/release.yml)
-[![PyPI version](https://img.shields.io/pypi/v/tt.svg)](https://pypi.org/project/tt/)
-[![PyPI downloads](https://img.shields.io/pypi/dm/tt)](https://pypi.org/project/tt/)
+[![Release](https://github.com/martindahlswe/ttx-cli/actions/workflows/release.yml/badge.svg)](https://github.com/martindahlswe/ttx-cli/actions/workflows/release.yml)
+[![PyPI version](https://img.shields.io/pypi/v/ttx-cli.svg)](https://pypi.org/project/ttx-cli/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/ttx-cli)](https://pypi.org/project/ttx-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Author:** [Martin Dahl](https://github.com/martindahlswe)
@@ -31,7 +31,7 @@ It’s designed for speed, simplicity, and scriptability — with sensible defau
   - Entry marking, bulk actions, sorting
   - Persisted UI state
 - **Configurable**:
-  - XDG-compliant config (`~/.config/tt/config.yml`)
+  - XDG-compliant config (`~/.config/ttx/config.yml`)
   - Rounding rules
   - Confirmation prompts for destructive ops
 - **SQLite backend**:
@@ -49,27 +49,27 @@ It’s designed for speed, simplicity, and scriptability — with sensible defau
 ### From GitHub (editable dev install)
 
 ```bash
-git clone https://github.com/martindahlswe/tt.git
-cd tt
+git clone https://github.com/martindahlswe/ttx-clix-cli.git
+cd ttx-cli
 pip install -e .
 ```
 
 Now you can run:
 
 ```bash
-tt --help
+ttx --help
 ```
 
 ### From GitHub directly (pip)
 
 ```bash
-pip install "git+https://github.com/martindahlswe/tt.git@main#egg=tt"
+pip install "git+https://github.com/martindahlswe/ttx-clix-cli.git@main#egg=ttx-cli"
 ```
 
 ### From PyPI (once published)
 
 ```bash
-pip install tt
+pip install ttx-cli
 ```
 
 ---
@@ -80,29 +80,29 @@ pip install tt
 
 ```bash
 # Initialize DB
-tt init
+ttx init
 
 # Add a task and list tasks
-tt task add "Finances"
-tt task ls
+ttx task add "Finances"
+ttx task ls
 
 # Start and stop a timer
-tt start 1
-tt stop
+ttx start 1
+ttx stop
 
 # Add a manual log
-tt log add 1 --start "09:00" --end "10:15"
-tt log add 1 --minutes 30
-tt log add 1 --ago 1h15
+ttx log add 1 --start "09:00" --end "10:15"
+ttx log add 1 --minutes 30
+ttx log add 1 --ago 1h15
 
 # Show logs
-tt log ls --all --week
+ttx log ls --all --week
 
 # Generate a report
-tt report --group day --since week
+ttx report --group day --since week
 
 # Open TUI
-tt tui
+ttx tui
 ```
 
 ### TUI keybindings
@@ -121,7 +121,7 @@ tt tui
 
 Config file lives at:
 
-- Linux/macOS: `~/.config/tt/config.yml`
+- Linux/macOS: `~/.config/ttx/config.yml`
 
 Example:
 
@@ -150,7 +150,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/).
 Examples:
 
 ```
-feat(cli): add tt examples command
+feat(cli): add ttx examples command
 fix(tui): guard _save_state when widgets are unmounted
 feat!: drop pomodoro feature (breaking)
 ```
@@ -170,5 +170,5 @@ MIT © [Martin Dahl](https://github.com/martindahlswe)
 
 ## 📌 Links
 
-- Repo: [https://github.com/martindahlswe/tt](https://github.com/martindahlswe/tt)
-- Issues: [https://github.com/martindahlswe/tt/issues](https://github.com/martindahlswe/tt/issues)
+- Repo: [https://github.com/martindahlswe/ttx-cli](https://github.com/martindahlswe/ttx-cli)
+- Issues: [https://github.com/martindahlswe/ttx-clix-cli/issues](https://github.com/martindahlswe/ttx-clix-cli/issues)

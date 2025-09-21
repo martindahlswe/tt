@@ -1,4 +1,3 @@
-# tt/cli.py
 from __future__ import annotations
 import json
 import typing
@@ -25,16 +24,16 @@ import yaml
 console = Console()
 # Show help when no args; disable shell-completion noise
 app = typer.Typer(add_completion=False, no_args_is_help=True)
-app.info.help = "Tiny tasks + time tracker (CLI + TUI). Run `tt init` once; see `tt examples` for working commands."
+app.info.help = "Tiny tasks + time tracker (CLI + TUI). Run `ttx init` once; see `ttx examples` for working commands."
 
 def _version_callback(value: bool):
     if value:
         try:
             from importlib.metadata import version, PackageNotFoundError  # type: ignore
-            v = version("tt")
+            v = version("ttx")
         except Exception:
             v = "0.0.0+local"
-        typer.echo(f"tt {v}")
+        typer.echo(f"ttx {v}")
         raise typer.Exit()
 
 @app.callback()
@@ -66,36 +65,36 @@ def show_examples():
     examples_text = """[bold cyan]Examples:[/bold cyan]
 
 • First-time setup:
-  [green]tt init[/green]
+  [green]ttx init[/green]
 
 • Create a task and list tasks (note the ID in the first column):
-  [green]tt task add "Finances"[/green]
-  [green]tt task ls[/green]
+  [green]ttx task add "Finances"[/green]
+  [green]ttx task ls[/green]
 
 • Start/stop timing (replace 1 with the ID you saw in 'task ls'):
-  [green]tt start 1[/green]
-  [green]tt stop[/green]
+  [green]ttx start 1[/green]
+  [green]ttx stop[/green]
 
 • Add a manual log (positional TASK_ID, not --task):
-  [green]tt log add 1 --start "2025-09-20 09:00" --end "2025-09-20 10:15"[/green]
-  [green]tt log add 1 --minutes 30[/green]
-  [green]tt log add 1 --ago 90m[/green]
+  [green]ttx log add 1 --start "2025-09-20 09:00" --end "2025-09-20 10:15"[/green]
+  [green]ttx log add 1 --minutes 30[/green]
+  [green]ttx log add 1 --ago 90m[/green]
 
 • Show logs:
-  [green]tt log ls 1 --week[/green]        # for one task, this week
-  [green]tt log ls --all --week[/green]    # across all tasks
+  [green]ttx log ls 1 --week[/green]        # for one task, this week
+  [green]ttx log ls --all --week[/green]    # across all tasks
 
 • Summaries:
-  [green]tt report --group day --since week[/green]
+  [green]ttx report --group day --since week[/green]
 
 • Config helpers:
-  [green]tt config validate[/green]
-  [green]tt config path[/green]
+  [green]ttx config validate[/green]
+  [green]ttx config path[/green]
 
 • Launch the TUI:
-  [green]tt tui[/green]
+  [green]ttx tui[/green]
 """
-    Console().print(Panel(examples_text, title="tt Examples", expand=False))
+    Console().print(Panel(examples_text, title="ttx Examples", expand=False))
 
 config_app = typer.Typer(help="Config utilities")
 
@@ -745,50 +744,60 @@ def report(
     console.print(table)
 
 @app.command()
-def export_md(
+@app.command()
+@app.command()
+def export(
     ctx: typer.Context,
+    format: str = typer.Option("md", "--format", help="Output format: md or csv"),
     since: str = typer.Option("today", "--since"),
     until: str = typer.Option("now", "--until"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Output file path (for CSV only)"),
 ):
-    """Markdown export grouped by task with per-entry bullets."""
+    """
+    Export data in markdown or CSV format.
+    - Markdown: grouped by task, printed to console
+    - CSV: raw entries with columns: task_id, title, start, end, minutes, note
+    """
+    from . import time_entries as logs, tasks
+    from .time_entries import _round_seconds_to_minutes, _overlap_seconds
+    from . import timeparse as tparse
+
     s, u = tparse.window(since, until)
-    rows = tasks.list_tasks(None, ctx.obj.db_path, include_archived=False)
-    lines: List[str] = []
-    for r in rows:
-        tid, title, *_ = r
-        per = logs.entry_minutes_for_task_window(tid, s, u, ctx.obj.db_path)
-        if not per: continue
-        total = sum(m for _, m in per)
-        lines.append(f"- {title} — {fmt_minutes(total)}")
-        for note, m in per:
-            lines.append(f"  - {note or '(no note)'} — {fmt_minutes(m)}")
-    typer.echo("\n".join(lines) if lines else "(no data)")
 
-@app.command()
-def export_csv(
-    ctx: typer.Context,
-    since: str = typer.Option(None, "--since"),
-    until: str = typer.Option(None, "--until"),
-    out: Path = typer.Option(..., "--out"),
-):
-    """CSV export: task,title,start,end,minutes,note"""
-    import csv
-    s, u = tparse.window(since, until)
-    with dbmod.connect(ctx.obj.db_path) as conn, open(out, "w", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["task_id", "task_title", "start", "end", "minutes", "note"])
-        rows = conn.execute("""
-            SELECT e.task_id, t.title, e.start, e.end, e.note
-            FROM time_entries e JOIN tasks t ON t.id = e.task_id
-            ORDER BY e.start
-        """).fetchall()
-        for task_id, title, start_s, end_s, note in rows:
-            sec = logs._overlap_seconds(start_s, end_s, s, u)
-            if sec <= 0: continue
-            w.writerow([task_id, title, start_s, end_s or "", logs._round_seconds_to_minutes(sec), (note or "").strip()])
-    console.print(f"[green]wrote[/green] {out}")
+    if format == "md":
+        rows = tasks.list_tasks(None, ctx.obj.db_path, include_archived=False)
+        lines: List[str] = []
+        for r in rows:
+            tid, title, *_ = r
+            per = logs.entry_minutes_for_task_window(tid, s, u, ctx.obj.db_path)
+            if not per:
+                continue
+            total = sum(m for _, m in per)
+            lines.append(f"- {title} — {fmt_minutes(total)}")
+            for note, m in per:
+                lines.append(f"  - {note or '(no note)'} — {fmt_minutes(m)}")
+        typer.echo("\n".join(lines) if lines else "(no data)")
 
-# ---------- entry point ----------
+    elif format == "csv":
+        if out is None:
+            console.print("[red]--out is required when using --format csv[/red]")
+            raise typer.Exit(1)
+        import csv
+        with dbmod.connect(ctx.obj.db_path) as conn, open(out, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["task_id", "task_title", "start", "end", "minutes", "note"])
+            rows = conn.execute("""
+                SELECT e.task_id, t.title, e.start, e.end, e.note
+                FROM time_entries e JOIN tasks t ON t.id = e.task_id
+                ORDER BY e.start
+            """).fetchall()
+            for task_id, title, start_s, end_s, note in rows:
+                sec = _overlap_seconds(start_s, end_s, s, u)
+                if sec <= 0:
+                    continue
+                w.writerow([task_id, title, start_s, end_s or "", _round_seconds_to_minutes(sec), (note or "").strip()])
+        console.print(f"[green]wrote[/green] {out}")
 
-if __name__ == "__main__":
-    app()
+    else:
+        console.print("[red]Invalid format. Use --format md or csv[/red]")
+        raise typer.Exit(1)
