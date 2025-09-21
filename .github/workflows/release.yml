@@ -2,12 +2,12 @@ name: Release
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" ]   # semantic-release decides if a release is needed
   workflow_dispatch:
 
 permissions:
-  contents: write      # allow semantic-release to commit + tag
-  id-token: write      # REQUIRED for PyPI Trusted Publisher (OIDC)
+  contents: write          # semantic-release pushes version bump + tag + GH release
+  id-token: write          # REQUIRED for PyPI Trusted Publisher (OIDC)
 
 jobs:
   release:
@@ -24,22 +24,29 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Install tools
         run: |
           python -m pip install --upgrade pip
           pip install python-semantic-release build
 
-      # This step bumps pyproject.toml, commits, and tags
-      - name: Bump version with semantic-release
+      # Bump pyproject.toml, commit, tag, and create GH release (no PyPI upload here)
+      - name: Run semantic-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release version
+        run: semantic-release publish
 
       - name: Build sdist and wheel
         run: python -m build
 
+      # Publish to PyPI using OIDC Trusted Publisher (first success activates the pending publisher)
       - name: Publish to PyPI (Trusted Publisher)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          # environment: production   # <- uncomment if you specified an Environment name in PyPI Trusted Publisher
 
