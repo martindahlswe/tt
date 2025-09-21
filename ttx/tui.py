@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from .time_entries import current_running
 
 from . import config as cfgmod
 

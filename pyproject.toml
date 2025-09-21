@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ttx-cli"
-version = "1.0.1"
+version = "1.0.2"
 description = "Tiny tasks and time tracker"
 authors = [
   { name="Martin Dahl", email="martindahl16@icloud.com" }
