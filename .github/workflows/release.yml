@@ -2,13 +2,12 @@ name: Release
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" ]   # semantic-release runs on main and decides if a release is needed
   workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: write          # semantic-release pushes version bump + tag
+  id-token: write          # REQUIRED for PyPI Trusted Publisher (OIDC)
 
 jobs:
   release:
@@ -25,16 +24,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install build tools
+      - name: Install tools
         run: |
           python -m pip install --upgrade pip
-          pip install hatchling build twine
-          pip install python-semantic-release
+          pip install python-semantic-release build
 
-      - name: Run Semantic Release
+      # Decide next version, bump pyproject.toml, create tag and GitHub release
+      - name: semantic-release version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          semantic-release version
-          semantic-release publish
+        run: semantic-release version
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      # Publish to PyPI using OIDC Trusted Publisher
+      - name: Publish to PyPI (Trusted Publisher)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # environment: production   # uncomment if you specified an Environment name on PyPI
+
