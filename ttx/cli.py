@@ -5,7 +5,6 @@ import os
 import platform
 import subprocess
 from datetime import datetime, timedelta
-from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 import typer
@@ -743,8 +742,6 @@ def report(
         table.add_row(k, str(m))
     console.print(table)
 
-@app.command()
-@app.command()
 @app.command()
 def export(
     ctx: typer.Context,

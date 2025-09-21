@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
+from .timeparse import _parse_ago
 from typing import Optional, Union, Iterable, List, Tuple
 
 from .db import connect, now_iso, DEFAULT_DB
@@ -125,6 +126,32 @@ def entries_with_durations(task_id: int, db_path=DEFAULT_DB) -> List[Tuple[int, 
             mins = _round_seconds_to_minutes(sec)
             rows.append((eid, start_s, end_s, note, mins))
     return rows
+
+
+def entry_minutes_for_task(task_id: int, db_path=DEFAULT_DB) -> List[Tuple[str, int]]:
+    """Return list of (note, minutes) tuples for a task, without a time window."""
+    entries = []
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "SELECT start, end, note FROM time_entries WHERE task_id = ?",
+            (task_id,)
+        )
+        for start_s, end_s, note in cur.fetchall():
+            sec = _overlap_seconds(start_s, end_s, None, None)
+            m = _round_seconds_to_minutes(sec)
+            entries.append((note or "", m))
+    return entries
+
+    total_minutes = 0
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "SELECT start, end FROM time_entries WHERE task_id = ?",
+            (task_id,)
+        )
+        for start_s, end_s in cur.fetchall():
+            sec = _overlap_seconds(start_s, end_s, None, None)
+            total_minutes += _round_seconds_to_minutes(sec)
+    return total_minutes
 
 
 # ---------------- aggregates ----------------
@@ -319,3 +346,109 @@ def edit_entry(entry_id: int, *args, start: Optional[str] = None, end: Optional[
     values.append(entry_id)
     with connect(db_path) as conn:
         conn.execute(f"UPDATE time_entries SET {', '.join(fields)} WHERE id = ?", values)
+
+from .db import connect, now_iso
+from datetime import datetime
+from typing import Optional
+
+def start(task_id: int, db_path, note: Optional[str] = None) -> int:
+    with connect(db_path) as conn:
+        # Stop any running entries
+        conn.execute("UPDATE time_entries SET end=? WHERE end IS NULL", (now_iso(),))
+        cur = conn.execute(
+            "INSERT INTO time_entries(task_id, start, note) VALUES (?, ?, ?)",
+            (task_id, now_iso(), note),
+        )
+        return cur.lastrowid
+
+def stop(task_id: Optional[int] = None, db_path=None) -> Optional[int]:
+    with connect(db_path) as conn:
+        if task_id is None:
+            row = conn.execute("SELECT id FROM time_entries WHERE end IS NULL").fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id FROM time_entries WHERE end IS NULL AND task_id=?",
+                (task_id,),
+            ).fetchone()
+        if not row:
+            return None
+        entry_id = row[0]
+        conn.execute("UPDATE time_entries SET end=? WHERE id=?", (now_iso(), entry_id))
+        return entry_id
+
+def add_manual_entry(task_id: int, db_path, *, minutes=None, start=None, end=None, ago=None, note=None) -> int:
+    if ago:
+        now = datetime.now().astimezone()
+        seconds = _parse_ago(ago)
+        start = now - timedelta(seconds=seconds)
+        end = now
+    elif minutes is not None:
+        now = datetime.now().astimezone()
+        start = now - timedelta(minutes=minutes)
+        end = now
+    elif start and end:
+        start = datetime.fromisoformat(start)
+        end = datetime.fromisoformat(end)
+    else:
+        raise ValueError("Invalid combination: need --minutes, or --ago, or both --start and --end")
+
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
+            (task_id, start.isoformat(), end.isoformat(), note),
+        )
+        return cur.lastrowid
+
+def split_entry(entry_id: int, at: str, db_path) -> tuple[int, int]:
+    at_time = datetime.fromisoformat(at)
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT task_id, start, end, note FROM time_entries WHERE id=?", (entry_id,)).fetchone()
+        if not row:
+            raise ValueError("entry not found")
+        task_id, start_s, end_s, note = row
+        start = datetime.fromisoformat(start_s)
+        end = datetime.fromisoformat(end_s)
+        if not (start < at_time < end):
+            raise ValueError("Split time must be between start and end")
+        conn.execute("DELETE FROM time_entries WHERE id=?", (entry_id,))
+        cur1 = conn.execute(
+            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
+            (task_id, start.isoformat(), at_time.isoformat(), note),
+        )
+        cur2 = conn.execute(
+            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
+            (task_id, at_time.isoformat(), end.isoformat(), note),
+        )
+        return cur1.lastrowid, cur2.lastrowid
+
+def trim_entry(entry_id: int, start: Optional[str], end: Optional[str], db_path) -> bool:
+    if not (start or end):
+        raise ValueError("Need at least one of --start or --end")
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT start, end FROM time_entries WHERE id=?", (entry_id,)).fetchone()
+        if not row:
+            return False
+        s, e = row
+        if start:
+            s = start
+        if end:
+            e = end
+        conn.execute("UPDATE time_entries SET start=?, end=? WHERE id=?", (s, e, entry_id))
+        return True
+
+def reassign_entry(entry_id: int, new_task_id: int, db_path) -> bool:
+    with connect(db_path) as conn:
+        cur = conn.execute("UPDATE time_entries SET task_id=? WHERE id=?", (new_task_id, entry_id))
+        return cur.rowcount > 0
+
+from pathlib import Path
+from typing import Optional, Tuple
+from .db import connect
+
+def current_running(db_path: Path) -> Optional[Tuple[int, int]]:
+    """Return (entry_id, task_id) of currently running entry, or None."""
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id, task_id FROM time_entries WHERE end IS NULL ORDER BY start DESC LIMIT 1"
+        ).fetchone()
+    return row if row else None

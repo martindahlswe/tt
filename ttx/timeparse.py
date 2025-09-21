@@ -116,3 +116,27 @@ def window(since: Optional[str], until: Optional[str]) -> Tuple[Optional[datetim
     s = parse_point(since) if since else None
     u = parse_point(until) if until else None
     return s, u
+
+import re
+
+def _parse_ago(s: str) -> int:
+    """
+    Parse human-readable duration strings like:
+    '90m', '2h', '1h30m', '1d2h', etc., and return total seconds.
+    """
+    s = s.strip().lower()
+    total_seconds = 0
+    pattern = r"(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?"
+    match = re.match(pattern, s)
+    if not match:
+        raise ValueError(f"Invalid duration format: {s}")
+    days, hours, minutes = match.groups()
+    if days:
+        total_seconds += int(days) * 86400
+    if hours:
+        total_seconds += int(hours) * 3600
+    if minutes:
+        total_seconds += int(minutes) * 60
+    if total_seconds == 0:
+        raise ValueError(f"No valid duration found in: {s}")
+    return total_seconds
