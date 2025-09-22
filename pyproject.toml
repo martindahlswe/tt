@@ -12,7 +12,13 @@ authors = [
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = []
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "textual>=0.58.0",
+    "click>=8.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "pyright", "textual-dev", "python-semantic-release"]
