@@ -1,7 +1,8 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
-from .timeparse import _parse_ago
 from typing import Optional, Union, Iterable, List, Tuple
+from .timeparse import _parse_ago
+from pathlib import Path
 
 from .db import connect, now_iso, DEFAULT_DB
 from . import timeparse as tparse
@@ -64,7 +65,7 @@ def _parse_duration_to_minutes(s: str) -> int:
             elif ch == 'h':
                 hours += val
             elif ch == 'm':
-                mins += val
+                mins += valal
         else:
             raise ValueError(f'bad char in duration: {ch!r}')
     if num:
@@ -130,31 +131,17 @@ def entries_with_durations(task_id: int, db_path=DEFAULT_DB) -> List[Tuple[int, 
 
 def entry_minutes_for_task(task_id: int, db_path=DEFAULT_DB) -> List[Tuple[str, int]]:
     """Return list of (note, minutes) tuples for a task, without a time window."""
-    entries = []
+    rows: List[Tuple[str, int]] = []
     with connect(db_path) as conn:
         cur = conn.execute(
-            "SELECT start, end, note FROM time_entries WHERE task_id = ?",
-            (task_id,)
+            "SELECT start, end, note FROM time_entries WHERE task_id = ? ORDER BY start ASC",
+            (task_id,),
         )
         for start_s, end_s, note in cur.fetchall():
             sec = _overlap_seconds(start_s, end_s, None, None)
-            m = _round_seconds_to_minutes(sec)
-            entries.append((note or "", m))
-    return entries
-
-    total_minutes = 0
-    with connect(db_path) as conn:
-        cur = conn.execute(
-            "SELECT start, end FROM time_entries WHERE task_id = ?",
-            (task_id,)
-        )
-        for start_s, end_s in cur.fetchall():
-            sec = _overlap_seconds(start_s, end_s, None, None)
-            total_minutes += _round_seconds_to_minutes(sec)
-    return total_minutes
-
-
-# ---------------- aggregates ----------------
+            m = _round_seconds_to_minutes(sec) if sec > 0 else 0
+            rows.append(((note or ""), m))
+    return rows
 
 def minutes_by_task(
     db_path=DEFAULT_DB,
@@ -347,103 +334,24 @@ def edit_entry(entry_id: int, *args, start: Optional[str] = None, end: Optional[
     with connect(db_path) as conn:
         conn.execute(f"UPDATE time_entries SET {', '.join(fields)} WHERE id = ?", values)
 
-from .db import connect, now_iso
-from datetime import datetime
-from typing import Optional
-
-def start(task_id: int, db_path, note: Optional[str] = None) -> int:
-    with connect(db_path) as conn:
-        # Stop any running entries
-        conn.execute("UPDATE time_entries SET end=? WHERE end IS NULL", (now_iso(),))
-        cur = conn.execute(
-            "INSERT INTO time_entries(task_id, start, note) VALUES (?, ?, ?)",
-            (task_id, now_iso(), note),
-        )
-        return cur.lastrowid
-
-def stop(task_id: Optional[int] = None, db_path=None) -> Optional[int]:
-    with connect(db_path) as conn:
-        if task_id is None:
-            row = conn.execute("SELECT id FROM time_entries WHERE end IS NULL").fetchone()
-        else:
-            row = conn.execute(
-                "SELECT id FROM time_entries WHERE end IS NULL AND task_id=?",
-                (task_id,),
-            ).fetchone()
-        if not row:
-            return None
-        entry_id = row[0]
-        conn.execute("UPDATE time_entries SET end=? WHERE id=?", (now_iso(), entry_id))
-        return entry_id
-
-def add_manual_entry(task_id: int, db_path, *, minutes=None, start=None, end=None, ago=None, note=None) -> int:
-    if ago:
-        now = datetime.now().astimezone()
-        seconds = _parse_ago(ago)
-        start = now - timedelta(seconds=seconds)
-        end = now
-    elif minutes is not None:
-        now = datetime.now().astimezone()
-        start = now - timedelta(minutes=minutes)
-        end = now
-    elif start and end:
-        start = datetime.fromisoformat(start)
-        end = datetime.fromisoformat(end)
-    else:
-        raise ValueError("Invalid combination: need --minutes, or --ago, or both --start and --end")
-
+def entry_minutes_for_task_window(task_id: int, win_start, win_end, db_path=DEFAULT_DB) -> List[Tuple[str, int]]:
+    """Return list of (note, minutes) for a task within an optional window."""
+    rows: List[Tuple[str, int]] = []
     with connect(db_path) as conn:
         cur = conn.execute(
-            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
-            (task_id, start.isoformat(), end.isoformat(), note),
+            "SELECT start, end, note FROM time_entries WHERE task_id = ? ORDER BY start ASC",
+            (task_id,),
         )
-        return cur.lastrowid
+        for start_s, end_s, note in cur.fetchall():
+            sec = _overlap_seconds(start_s, end_s, win_start, win_end)
+            if sec <= 0:
+                continue
+            rows.append(((note or ""), _round_seconds_to_minutes(sec)))
+    return rows
 
-def split_entry(entry_id: int, at: str, db_path) -> tuple[int, int]:
-    at_time = datetime.fromisoformat(at)
-    with connect(db_path) as conn:
-        row = conn.execute("SELECT task_id, start, end, note FROM time_entries WHERE id=?", (entry_id,)).fetchone()
-        if not row:
-            raise ValueError("entry not found")
-        task_id, start_s, end_s, note = row
-        start = datetime.fromisoformat(start_s)
-        end = datetime.fromisoformat(end_s)
-        if not (start < at_time < end):
-            raise ValueError("Split time must be between start and end")
-        conn.execute("DELETE FROM time_entries WHERE id=?", (entry_id,))
-        cur1 = conn.execute(
-            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
-            (task_id, start.isoformat(), at_time.isoformat(), note),
-        )
-        cur2 = conn.execute(
-            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
-            (task_id, at_time.isoformat(), end.isoformat(), note),
-        )
-        return cur1.lastrowid, cur2.lastrowid
-
-def trim_entry(entry_id: int, start: Optional[str], end: Optional[str], db_path) -> bool:
-    if not (start or end):
-        raise ValueError("Need at least one of --start or --end")
-    with connect(db_path) as conn:
-        row = conn.execute("SELECT start, end FROM time_entries WHERE id=?", (entry_id,)).fetchone()
-        if not row:
-            return False
-        s, e = row
-        if start:
-            s = start
-        if end:
-            e = end
-        conn.execute("UPDATE time_entries SET start=?, end=? WHERE id=?", (s, e, entry_id))
-        return True
-
-def reassign_entry(entry_id: int, new_task_id: int, db_path) -> bool:
-    with connect(db_path) as conn:
-        cur = conn.execute("UPDATE time_entries SET task_id=? WHERE id=?", (new_task_id, entry_id))
-        return cur.rowcount > 0
-
-from pathlib import Path
-from typing import Optional, Tuple
-from .db import connect
+def minutes_by_task_window(win_start, win_end, db_path=DEFAULT_DB, *, rounding: str | None = None) -> dict[int, int]:
+    """Wrapper to minutes_by_task filtered by a window."""
+    return minutes_by_task(db_path=db_path, rounding=rounding, win_start=win_start, win_end=win_end)
 
 def current_running(db_path: Path) -> Optional[Tuple[int, int]]:
     """Return (entry_id, task_id) of currently running entry, or None."""
@@ -452,3 +360,115 @@ def current_running(db_path: Path) -> Optional[Tuple[int, int]]:
             "SELECT id, task_id FROM time_entries WHERE end IS NULL ORDER BY start DESC LIMIT 1"
         ).fetchone()
     return row if row else None
+
+def start(task_id: int, db_path: Path, *, note: Optional[str] = None) -> int:
+    """Stop any running entry, then start a new one for task_id. Returns new entry id.
+    Raises ValueError if task does not exist."""
+    with connect(db_path) as conn:
+        t = conn.execute("SELECT id FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not t:
+            raise ValueError(f"task {task_id} not found")
+        # stop any running
+        conn.execute("UPDATE time_entries SET end=? WHERE end IS NULL", (now_iso(),))
+        cur = conn.execute(
+            "INSERT INTO time_entries(task_id, start, note) VALUES (?, ?, ?)",
+            (task_id, now_iso(), note),
+        )
+        return cur.lastrowid
+
+def stop(task_id: Optional[int] = None, db_path: Path = DEFAULT_DB) -> Optional[int]:
+    """Stop the running entry (optionally for a specific task). Returns entry id or None."""
+    with connect(db_path) as conn:
+        if task_id is None:
+            row = conn.execute("SELECT id FROM time_entries WHERE end IS NULL ORDER BY start DESC LIMIT 1").fetchone()
+        else:
+            row = conn.execute("SELECT id FROM time_entries WHERE end IS NULL AND task_id=? ORDER BY start DESC LIMIT 1", (task_id,)).fetchone()
+        if not row:
+            return None
+        eid = int(row[0])
+        conn.execute("UPDATE time_entries SET end=? WHERE id=?", (now_iso(), eid))
+        return eid
+
+def add_manual_entry(task_id: int, db_path: Path, *, minutes=None, start=None, end=None, ago=None, note=None) -> int:
+    """Add a manual time entry. Requires one of: minutes, ago, or start+end.
+    Raises ValueError on invalid inputs or if task is missing."""
+    with connect(db_path) as conn:
+        t = conn.execute("SELECT id FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not t:
+            raise ValueError(f"task {task_id} not found")
+    now = datetime.now().astimezone()
+    if ago:
+        seconds = _parse_ago(str(ago))
+        s_dt = now - timedelta(seconds=seconds)
+        e_dt = now
+    elif minutes is not None:
+        try:
+            m = int(minutes)
+        except Exception:
+            raise ValueError("minutes must be an integer")
+        if m <= 0:
+            raise ValueError("minutes must be > 0")
+        s_dt = now - timedelta(minutes=m)
+        e_dt = now
+    elif start and end:
+        s_dt = _to_dt_local(start)
+        e_dt = _to_dt_local(end)
+        if e_dt is not None and s_dt is not None and e_dt <= s_dt:
+            raise ValueError("end must be after start")
+    else:
+        raise ValueError("provide one of: --minutes, --ago, or both --start and --end")
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
+            (task_id, s_dt.isoformat(), e_dt.isoformat(), note),
+        )
+        return cur.lastrowid
+
+def split_entry(entry_id: int, at: str, db_path: Path) -> tuple[int, int]:
+    """Split an entry at the given ISO/local time, returning (left_id, right_id)."""
+    at_dt = _to_dt_local(at)
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT task_id, start, end, note FROM time_entries WHERE id=?", (entry_id,)).fetchone()
+        if not row:
+            raise ValueError(f"entry {entry_id} not found")
+        task_id, s, e, note = row
+        s_dt = _to_dt_local(s); e_dt = _to_dt_local(e)
+        if e_dt is None:
+            raise ValueError("cannot split a running entry")
+        if not (s_dt < at_dt < e_dt):
+            raise ValueError("split time must be between start and end")
+        conn.execute("DELETE FROM time_entries WHERE id=?", (entry_id,))
+        cur1 = conn.execute(
+            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
+            (task_id, s_dt.isoformat(), at_dt.isoformat(), note),
+        )
+        cur2 = conn.execute(
+            "INSERT INTO time_entries(task_id, start, end, note) VALUES (?, ?, ?, ?)",
+            (task_id, at_dt.isoformat(), e_dt.isoformat(), note),
+        )
+        return cur1.lastrowid, cur2.lastrowid
+
+def trim_entry(entry_id: int, start: Optional[str], end: Optional[str], db_path: Path) -> bool:
+    """Trim entry start/end. Returns True if updated. Raises on invalid ranges."""
+    if not (start or end):
+        raise ValueError("provide --start and/or --end")
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT start, end FROM time_entries WHERE id=?", (entry_id,)).fetchone()
+        if not row:
+            return False
+        s, e = row
+        s_dt = _to_dt_local(start) if start else _to_dt_local(s)
+        e_dt = _to_dt_local(end) if end else _to_dt_local(e)
+        if e_dt is not None and s_dt is not None and e_dt <= s_dt:
+            raise ValueError("end must be after start")
+        conn.execute("UPDATE time_entries SET start=?, end=? WHERE id=?", (s_dt.isoformat(), e_dt.isoformat() if e_dt else None, entry_id))
+        return True
+
+def reassign_entry(entry_id: int, new_task_id: int, db_path: Path) -> bool:
+    """Move entry to another task. Returns True if updated; raises if new task missing."""
+    with connect(db_path) as conn:
+        t = conn.execute("SELECT id FROM tasks WHERE id=?", (new_task_id,)).fetchone()
+        if not t:
+            raise ValueError(f"task {new_task_id} not found")
+        cur = conn.execute("UPDATE time_entries SET task_id=? WHERE id=?", (new_task_id, entry_id))
+        return cur.rowcount > 0

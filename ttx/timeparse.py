@@ -32,12 +32,18 @@ def _strict_iso_enabled() -> bool:
 # ---------------- parsing helpers ----------------
 
 def _parse_iso_or_space(dt_str: str) -> datetime:
-    """Parse ISO 8601; also accept 'YYYY-MM-DD HH:MM[:SS]' by replacing the space with 'T'."""
+    """Parse ISO 8601; also accept 'YYYY-MM-DD HH:MM[:SS]' by replacing the space with 'T'.
+    Raises ValueError with a helpful message on failure.
+    """
     s = dt_str.strip()
     if " " in s and "T" not in s:
         s = s.replace(" ", "T", 1)
-    # fromisoformat handles 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM', and timezone offsets
-    dt = datetime.fromisoformat(s)
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception as e:
+        raise ValueError(
+            f"Invalid date/time {dt_str!r}. Expected ISO like 'YYYY-MM-DD', 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DDTHH:MM', with optional timezone."
+        ) from e
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=now_local().tzinfo)
     return dt.astimezone()

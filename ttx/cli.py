@@ -20,6 +20,8 @@ from . import tasks
 from . import time_entries as logs
 from .tui import run_tui
 import yaml
+import sqlite3
+import functools
 
 console = Console()
 # Show help when no args; disable shell-completion noise
@@ -170,6 +172,25 @@ def main(
 
 # ---------- helpers ----------
 
+def _fail(msg: str, code: int = 2) -> None:
+    """Print a user-friendly error and exit with code (default 2)."""
+    console.print(f"[red]{msg}[/red]")
+    raise typer.Exit(code)
+
+
+def _guard_db_errors(fn):
+    """Decorator mapping common exceptions to friendly errors without traces."""
+    @functools.wraps(fn)
+    def _wrap(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except sqlite3.IntegrityError as e:
+            _fail(f"Database constraint error: {e}", code=1)
+        except ValueError as e:
+            _fail(str(e), code=2)
+    return _wrap
+
+
 def fmt_minutes(m: int) -> str:
     if m <= 0:
         return "0m"
@@ -197,7 +218,6 @@ def _print_tasks_table(
         tid, title, st, created, completed, archived_at, prio, due, est, billable = r
         total_m = totals_map.get(tid, 0)
         bill = "✓" if billable else "•"
-
         # main task row
         table.add_row(
             str(tid),
@@ -209,29 +229,23 @@ def _print_tasks_table(
             bill,
             fmt_minutes(total_m),
         )
-
         # optional tags row
         if show_tags:
             tg = tasks.list_tags(tid, db_path)
             if tg:
                 table.add_row("", f"[dim]tags: {', '.join(tg)}[/dim]", "", "", "", "", "", "")
-
         # per-entry bullets INSIDE the table
         if entries_map is not None:
-            value = entries_map.get(tid, [])
-            if isinstance(value, list):
-                for note, m in value:
-                    if m <= 0:
-                        continue
-                    label = (note or "").strip() or "(no note)"
-                    table.add_row("", f"[dim]  - {label} - {fmt_minutes(m)}[/dim]", "", "", "", "", "", "")
-            elif isinstance(value, int) and value > 0:
-                table.add_row("", f"[dim]{fmt_minutes(value)} tracked[/dim]", "", "", "", "", "", "")
+            for note, m in entries_map.get(tid, []):
+                if m <= 0:
+                    continue
+                label = (note or "").strip() or "(no note)"
+                table.add_row("", f"[dim]  - {label} - {fmt_minutes(m)}[/dim]", "", "", "", "", "", "")
 
     console.print(table)
 
 def _entries_for_task_md(task_id: int, win_start, win_end, db_path: Path) -> List[Tuple[str, int]]:
-    return logs.entry_minutes_for_task_window(task_id, win_start, win_end, db_path)
+        return logs.entry_minutes_for_task_window(task_id, win_start, win_end, db_path)
 
 # ---------- init / backup / doctor ----------
 
@@ -312,17 +326,22 @@ def status(ctx: typer.Context):
     console.print(f"  elapsed: {fmt_minutes(logs._round_seconds_to_minutes(elapsed))}")
 
 @app.command()
+@_guard_db_errors
 def start(
     ctx: typer.Context,
-    task_id: int,
+    task_id: int = typer.Argument(..., help="Task ID to start timing on"),
     note: str = typer.Option("", "--note", help="Optional note for this time entry"),
 ):
     """Start a time entry on the task. If another is running, it will be stopped."""
+    # Validate task exists
+    if not tasks.get(task_id, ctx.obj.db_path):
+        _fail(f"task {task_id} not found")
     eid = logs.start(task_id, ctx.obj.db_path, note=note or None)
     suffix = f" — {note}" if note else ""
     console.print(f"[green]started[/green] entry {eid} on task {task_id}{suffix}")
 
 @app.command()
+@_guard_db_errors
 def stop(ctx: typer.Context, task_id: int = typer.Argument(None)):
     """Stop the running entry. If task_id is given, stops the running entry on that task."""
     eid = logs.stop(task_id, ctx.obj.db_path)
@@ -331,12 +350,15 @@ def stop(ctx: typer.Context, task_id: int = typer.Argument(None)):
 @app.command()
 def switch(
     ctx: typer.Context,
-    task_id: int,
+    task_id: int = typer.Argument(..., help="Task ID to start timing on"),
     note: str = typer.Option("", "--note", help="Optional new note"),
 ):
     """Stop current (if any) and start timing another task."""
     if logs.current_running(ctx.obj.db_path):
         logs.stop(db_path=ctx.obj.db_path)
+    # Validate task exists
+    if not tasks.get(task_id, ctx.obj.db_path):
+        _fail(f"task {task_id} not found")
     eid = logs.start(task_id, ctx.obj.db_path, note=note or None)
     console.print(f"[green]switched[/green] to task {task_id}, entry {eid}")
 
@@ -372,9 +394,10 @@ def task_add(ctx: typer.Context, title: str):
     console.print(f"[green]task {tid} added[/green]: {title}")
 
 @task_app.command("edit")
+@_guard_db_errors
 def task_edit(
     ctx: typer.Context,
-    task_id: int,
+    task_id: int = typer.Argument(..., help="Task ID to start timing on"),
     title: str = typer.Option(None, "--title"),
     priority: int = typer.Option(None, "--priority"),
     due: str = typer.Option(None, "--due", help="ISO date/time, e.g. 2025-09-19 or 2025-09-19 14:00"),
@@ -391,26 +414,30 @@ def task_edit(
     console.print(f"[green]task {task_id} updated[/green]")
 
 @task_app.command("done")
-def task_done(ctx: typer.Context, task_id: int):
+@_guard_db_errors
+def task_done(ctx: typer.Context, task_id: int = typer.Argument(..., help="Task ID")):
     tasks.mark_done(task_id, ctx.obj.db_path)
     console.print(f"[green]task {task_id} marked done[/green]")
 
 @task_app.command("archive")
-def task_archive(ctx: typer.Context, task_id: int):
+@_guard_db_errors
+def task_archive(ctx: typer.Context, task_id: int = typer.Argument(..., help="Task ID")):
     if tasks.archive(task_id, ctx.obj.db_path):
         console.print(f"[green]task {task_id} archived[/green]")
     else:
         console.print(f"[red]task {task_id} not found[/red]"); raise typer.Exit(1)
 
 @task_app.command("unarchive")
-def task_unarchive(ctx: typer.Context, task_id: int):
+@_guard_db_errors
+def task_unarchive(ctx: typer.Context, task_id: int = typer.Argument(..., help="Task ID")):
     if tasks.unarchive(task_id, ctx.obj.db_path):
         console.print(f"[green]task {task_id} unarchived[/green]")
     else:
         console.print(f"[red]task {task_id} not found[/red]"); raise typer.Exit(1)
 
 @task_app.command("rm")
-def task_rm(ctx: typer.Context, task_id: int, force: bool = typer.Option(False, "--force")):
+@_guard_db_errors
+def task_rm(ctx: typer.Context, task_id: int = typer.Argument(..., help="Task ID to start timing on"), force: bool = typer.Option(False, "--force")):
     try:
         ok = tasks.delete_task(task_id, ctx.obj.db_path, force=force)
     except ValueError as e:
@@ -420,16 +447,18 @@ def task_rm(ctx: typer.Context, task_id: int, force: bool = typer.Option(False, 
     console.print(f"[green]task {task_id} deleted[/green]")
 
 @task_app.command("merge")
-def task_merge(ctx: typer.Context, src: int, dst: int):
+@_guard_db_errors
+def task_merge(ctx: typer.Context, src: int = typer.Argument(..., help="Source task ID"), dst: int = typer.Argument(..., help="Destination task ID")):
     if tasks.merge_tasks(src, dst, ctx.obj.db_path):
         console.print(f"[green]merged[/green] task {src} → {dst}")
     else:
         console.print(f"[red]source task not found[/red]"); raise typer.Exit(1)
 
 @task_app.command("tag")
+@_guard_db_errors
 def task_tag(
     ctx: typer.Context,
-    task_id: int,
+    task_id: int = typer.Argument(..., help="Task ID to start timing on"),
     add: List[str] = typer.Option(None, "--add", help="Add tag (repeatable)"),
     remove: List[str] = typer.Option(None, "--remove", help="Remove tag (repeatable)"),
     list_tags: bool = typer.Option(False, "--ls", help="List tags"),
@@ -605,22 +634,28 @@ def log_ls(
         console.print(table)
         return
 @log_app.command("add")
+@_guard_db_errors
 def log_add(
     ctx: typer.Context,
-    task_id: int,
+    task_id: int = typer.Argument(..., help="Task ID to start timing on"),
     minutes: int = typer.Option(None, "--minutes", help="Duration in minutes; creates 'now - minutes' → now"),
     start: str = typer.Option(None, "--start", help="Start datetime (ISO or 'YYYY-MM-DD HH:MM'); requires --end or --minutes"),
     end: str = typer.Option(None, "--end", help="End datetime (ISO or 'YYYY-MM-DD HH:MM')"),
     ago: str = typer.Option(None, "--ago", help="Human duration like '90m', '2h', '1h30m', '1d2h'; creates 'now - ago' → now"),
     note: str = typer.Option("", "--note", help="Optional note for this entry"),
 ):
+    if not tasks.get(task_id, ctx.obj.db_path):
+        _fail(f"task {task_id} not found")
+    if minutes is None and ago is None and not (start and end):
+        _fail("Provide one of: --minutes, --ago, or both --start and --end")
     try:
         eid = logs.add_manual_entry(task_id, ctx.obj.db_path, minutes=minutes, start=start, end=end, ago=ago, note=note or None)
     except ValueError as e:
-        console.print(f"[red]{e}[/red]"); raise typer.Exit(1)
+        _fail(str(e), code=2)
     console.print(f"[green]entry {eid} added[/green]")
 
 @log_app.command("rm")
+@_guard_db_errors
 def log_rm(ctx: typer.Context, entry_id: int):
     ok = logs.delete_entry(entry_id, ctx.obj.db_path)
     if not ok:
@@ -628,6 +663,7 @@ def log_rm(ctx: typer.Context, entry_id: int):
     console.print(f"[green]entry {entry_id} deleted[/green]")
 
 @log_app.command("edit")
+@_guard_db_errors
 def log_edit(
     ctx: typer.Context,
     entry_id: int,
@@ -643,6 +679,7 @@ def log_edit(
     console.print(f"[green]entry {entry_id} updated[/green]")
 
 @log_app.command("move")
+@_guard_db_errors
 def log_move(ctx: typer.Context, entry_id: int, new_task_id: int):
     if logs.reassign_entry(entry_id, new_task_id, ctx.obj.db_path):
         console.print(f"[green]moved[/green] entry {entry_id} → task {new_task_id}")
@@ -650,6 +687,7 @@ def log_move(ctx: typer.Context, entry_id: int, new_task_id: int):
         console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
 
 @log_app.command("split")
+@_guard_db_errors
 def log_split(ctx: typer.Context, entry_id: int, at: str = typer.Option(..., "--at", help="Split point (ISO or 'YYYY-MM-DD HH:MM')")):
     try:
         left, right = logs.split_entry(entry_id, at, ctx.obj.db_path)
@@ -658,6 +696,7 @@ def log_split(ctx: typer.Context, entry_id: int, at: str = typer.Option(..., "--
     console.print(f"[green]split[/green] entry {entry_id} into [{left}] + [{right}]")
 
 @log_app.command("trim")
+@_guard_db_errors
 def log_trim(
     ctx: typer.Context,
     entry_id: int,

@@ -48,17 +48,25 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
     try:
         import yaml  # type: ignore
     except Exception:
+        # YAML not available; behave as before (empty config), but warn
+        print(f"[ttx:config] Warning: PyYAML not available; ignoring {path}", file=sys.stderr)
         return {}
     try:
         if path.exists():
             text = path.read_text(encoding="utf-8")
             data = (yaml.safe_load(text) or {})
             if not isinstance(data, dict):
+                print(f"[ttx:config] Warning: {path} does not contain a mapping (ignoring)", file=sys.stderr)
                 return {}
             return data
-    except Exception:
+    except yaml.YAMLError as e:  # type: ignore
+        print(f"[ttx:config] Warning: invalid YAML in {path}: {e}", file=sys.stderr)
+        return {}
+    except Exception as e:
+        print(f"[ttx:config] Warning: error reading {path}: {e}", file=sys.stderr)
         return {}
     return {}
+
 
 def _deep_merge(base: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
     """Shallow for most keys; deep for 'list' subdict."""
