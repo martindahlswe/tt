@@ -4,7 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ttx-cli"
-version = "1.0.5"
+version = "0.0.0"
+dynamic = ["version"]
 description = "Tiny tasks and time tracker"
 authors = [
   { name="Martin Dahl", email="martindahl16@icloud.com" }
@@ -40,4 +41,3 @@ exclude = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["ttx"]
-
