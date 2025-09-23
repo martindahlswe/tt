@@ -2,7 +2,6 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from .time_entries import current_running
 
 from . import config as cfgmod
 
@@ -288,26 +287,6 @@ class TTApp(App):
 
     
 
-    def _select_task_by_id(self, task_id: int) -> bool:
-        """Select the task row matching task_id. Returns True on success."""
-        t = self.query_one("#tasks", DataTable)
-        if not self._task_row_ids:
-            return False
-        try:
-            idx = self._task_row_ids.index(int(task_id))
-        except ValueError:
-            return False
-        # try coordinate API first, fall back to row
-        try:
-            t.cursor_coordinate = (idx, 0)
-        except Exception:
-            try:
-                t.cursor_row = idx
-            except Exception:
-                return False
-        return True
-
-
     def _update_filter_indicator(self) -> None:
         try:
             fb = self.query_one("#filterbar", Static)
@@ -321,25 +300,12 @@ class TTApp(App):
             parts.append(f"[b]Marked[/b]: {len(self._marked_entries)}")
         fb.update("  |  ".join(parts) if parts else "")
 
-    
     def refresh_data(self) -> None:
-        # Preserve currently selected task id (if any), then reload and restore selection.
-        prev_tid = self._get_selected_task_id()
-
-        self._clear_inline_ui()
-        self._load_tasks()
-
-        restored = False
-        if prev_tid is not None:
-            restored = self._select_task_by_id(prev_tid)
-
-        if not restored:
-            t = self.query_one("#tasks", DataTable)
-            self._select_first_row(t)
-
-        self._load_entries_for_selected()
-        self._update_filter_indicator()
-
+            self._clear_inline_ui()
+            self._load_tasks()
+            self._load_entries_for_selected()
+            self._update_filter_indicator()
+    
     def _load_tasks(self) -> None:
         t = self.query_one("#tasks", DataTable)
         t.clear()
@@ -360,6 +326,9 @@ class TTApp(App):
                 t.cursor_type = "row"
             except Exception:
                 pass
+            self._select_first_row(t)
+            self._load_entries_for_selected()
+        self._update_filter_indicator()
 
     def _load_entries_for_selected(self) -> None:
         t = self.query_one("#tasks", DataTable)
@@ -440,8 +409,8 @@ class TTApp(App):
                 except Exception:
                     pass
 
-    def _show_edit_banner(self, text: str, side: str = "right") -> None:
-        # Remove any existing banners to avoid stacking
+    def _show_edit_banner(self, text: str, side: str = "right", *, replace: bool = False) -> None:
+        # Remove any existing banners to avoid stacking (controlled by replace)
         for wid in list(self.query(".inline-banner").results()):
             try:
                 wid.remove()
@@ -453,17 +422,53 @@ class TTApp(App):
         self.mount(banner, after=after_widget)
 
     def _mount_edit_input(self, id_: str, value: str, placeholder: str, side: str = "right") -> None:
-        # Remove an existing field with the same id if any (safer re-entry)
-        try:
-            self.query_one(f"#{id_}", Input).remove()
-        except Exception:
-            pass
+        """
+        Mount (or reuse) a single-line Input for inline editing.
+        - If an Input with the same id already exists, reuse it (update value/placeholder/focus).
+        - If multiple exist (shouldn't happen, but can on re-prompts), remove extras.
+        - Only create a new Input if none exist.
+        """
+        from textual.widgets import Input, Static
+
         mount_after = "#rtitle" if side == "right" else "#ltitle"
         after_widget = self.query_one(mount_after, Static)
-        inp = Input(value=value, placeholder=placeholder, id=id_, classes="edit-field")
-        self.mount(inp, after=after_widget)
-        self.query_one(f"#{id_}", Input).focus()
 
+        # Find matching inputs (prefer scoping to the right pane if it exists)
+        try:
+            right = self.query_one("#right")
+            existing = list(right.query(f"Input#{id_}"))
+        except Exception:
+            existing = list(self.query(f"Input#{id_}"))
+
+        if existing:
+            primary = existing[0]
+            # Remove duplicates
+            for w in existing[1:]:
+                try:
+                    w.remove()
+                except Exception:
+                    pass
+            # Reuse primary
+            try:
+                primary.value = value or ""
+                primary.placeholder = placeholder
+                if "edit-field" not in primary.classes:
+                    primary.add_class("edit-field")
+                primary.focus()
+                return
+            except Exception:
+                try:
+                    primary.remove()
+                except Exception:
+                    pass
+
+        # Fresh mount
+        inp = Input(value=(value or ""), placeholder=placeholder, id=id_, classes="edit-field")
+        self.mount(inp, after=after_widget)
+        try:
+            self.query_one(f"#{id_}", Input).focus()
+        except Exception:
+            pass
     # -------------------- actions --------------------
 
     def action_toggle_theme(self) -> None:
@@ -1002,7 +1007,7 @@ class TTApp(App):
                 self._edit_changed["end"] = True
 
             # Prompt MINUTES
-            self._show_edit_banner(f"Editing entry {eid}: MINUTES")
+            self._show_edit_banner(f"Editing entry {eid}: MINUTES", replace=True)
             self.status.set_message("Enter new MINUTES (e.g. 25 / 1h15m / 2:30), or press Enter to keep.")
             current_minutes = self._edit_buf.get("minutes")
             self._mount_edit_input(
@@ -1028,10 +1033,10 @@ class TTApp(App):
                 if pm is None or pm <= 0:
                     self.status.set_message("[red]Invalid minutes[/red]")
                     # re-open minutes prompt with banner
-                    self._show_edit_banner(f"Editing entry {eid}: MINUTES")
+                    self._show_edit_banner(f"Editing entry {eid}: MINUTES", replace=True)
                     self._mount_edit_input(
                         id_=f"edit_all_minutes_{eid}",
-                        value=mv,
+                        value=(mv or ""),
                         placeholder="Minutes (e.g. 25 / 1h15m / 2:30). Blank = keep",
                     )
                     return
