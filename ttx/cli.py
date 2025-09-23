@@ -484,7 +484,38 @@ def task_ls(
     compact: bool = typer.Option(None, "--compact", help="Compact view (hide per-entry lines)"),
     limit: int = typer.Option(None, "--limit"),
     json_out: bool = typer.Option(False, "--json"),
+    parent_id: int = typer.Option(None, '--parent-id', help='Show sub-tasks of this task ID'),
 ):
+    from .tasks import list_tasks, get_children
+    from rich.table import Table
+    import typer
+    if parent_id is not None:
+        tasks = get_children(parent_id)
+    else:
+        tasks = list_tasks()
+        child_ids = set()
+        for task in tasks:
+            for child in get_children(task[0]):
+                child_ids.add(child[0])
+        tasks = [t for t in tasks if t[0] not in child_ids]  # filter out sub-tasks
+    table = Table(title=None)
+    table.add_column("ID", style="dim", width=4)
+    table.add_column("Title", width=80)
+    table.add_column("Status", width=8)
+    table.add_column("Pri", width=5)
+    table.add_column("Due")
+    def add_task_row(task, indent=''):
+        title = indent + task[1]
+        pri = str(task[5]) if len(task) > 5 else ''
+        due = str(task[6]) if len(task) > 6 else ''
+        table.add_row(str(task[0]), title, task[2], pri, due)
+        for child in get_children(task[0]):
+            add_task_row(child, indent=indent + '  ↳ ')
+    for task in tasks:
+        add_task_row(task)
+    from rich.console import Console
+    Console().print(table)
+    return
     used_compact = ctx.obj.list_compact if compact is None else compact
     used_limit = limit or ctx.obj.list_limit
     rows = tasks.list_tasks(status, ctx.obj.db_path, include_archived=all_, tags=tag or [], limit=used_limit)

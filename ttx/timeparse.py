@@ -146,3 +146,9 @@ def _parse_ago(s: str) -> int:
     if total_seconds == 0:
         raise ValueError(f"No valid duration found in: {s}")
     return total_seconds
+
+
+def format_minutes(minutes: int) -> str:
+    """Format total minutes as H:MM."""
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}:{mins:02d}"

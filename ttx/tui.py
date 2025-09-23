@@ -314,12 +314,50 @@ class TTApp(App):
         rows = tasks.list_tasks(db_path=self.db_path, include_archived=False)
         totals = logs.minutes_by_task(self.db_path, rounding=self.rounding)  # {task_id: minutes}
 
-        for r in rows:
-            tid, title, st, created, completed, archived_at, prio, due, est, billable = r
+        # Build child map from get_children() to compute true hierarchy
+        try:
+            from .tasks import get_children  # lazy import to avoid cycles
+        except Exception:  # fallback if not available
+            def get_children(_tid, db_path=None):
+                return []
+
+        rows_by_id = {r[0]: r for r in rows}
+        order_ids = [r[0] for r in rows]
+        child_map = {tid: [] for tid in order_ids}
+        child_ids = set()
+        for tid in order_ids:
+            try:
+                children = get_children(tid, db_path=self.db_path) or []
+            except Exception:
+                children = []
+            for c in children:
+                cid = c[0]
+                child_ids.add(cid)
+                child_map.setdefault(tid, []).append(cid)
+                if cid not in rows_by_id:
+                    # pad/normalize and store so render can use totals etc.
+                    padded = tuple(c) + (None,)*(10-len(c))
+                    rows_by_id[cid] = padded
+
+        top_level_ids = [tid for tid in order_ids if tid not in child_ids]
+
+        def render_task(tid:int, indent:str=""):
+            r = rows_by_id.get(tid)
+            if not r:
+                return
+            # Ensure tuple has 10 elements: (id, title, status, created_at, completed_at, archived_at, prio, due, est, billable)
+            r = tuple(r) + (None,)*(10-len(r))
+            _, title, st, _, _, _, prio, due, est, billable = r[:10]
             bill = "✓" if billable else "•"
             total = totals.get(tid, 0)
-            t.add_row(str(tid), title, st, str(prio or 0), due or "", f"{est or 0}", bill, f"{total}m")
+            t.add_row(str(tid), indent + title, st, str(prio or 0), due or "", f"{est or 0}", bill, f"{total}m")
             self._task_row_ids.append(int(tid))
+            # Recurse children (keep their insertion order by ID ascending to be stable)
+            for cid in sorted(child_map.get(tid, [])):
+                render_task(cid, indent + "  ↳ ")
+
+        for tid in top_level_ids:
+            render_task(tid)
 
         if rows:
             try:
@@ -329,7 +367,6 @@ class TTApp(App):
             self._select_first_row(t)
             self._load_entries_for_selected()
         self._update_filter_indicator()
-
     def _load_entries_for_selected(self) -> None:
         t = self.query_one("#tasks", DataTable)
         e = self.query_one("#entries", DataTable)
