@@ -2,12 +2,16 @@ name: Release
 
 on:
   push:
-    branches: [ "main" ]   # semantic-release decides if a release is needed
+    branches: [ "main" ]           # semantic-release will decide if a release is needed
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write          # semantic-release pushes version bump + tag + GH release
-  id-token: write          # REQUIRED for PyPI Trusted Publisher (OIDC)
+  contents: write                  # needed for tags/commits and GitHub Releases
+  id-token: write                  # REQUIRED for PyPI Trusted Publisher (OIDC)
 
 jobs:
   release:
@@ -17,36 +21,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0           # semantic-release needs full history
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Install tools
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install python-semantic-release build
+          pip install build
 
-      # Bump pyproject.toml, commit, tag, and create GH release (no PyPI upload here)
-      - name: Run semantic-release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: semantic-release publish
+      # Use the official python-semantic-release action so we can branch on outputs.released
+      - name: Determine & perform release (semantic-release)
+        id: semrel
+        uses: python-semantic-release/python-semantic-release@v9
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # By default: does version bump (if needed), commits, tags, and creates GitHub Release
 
-      - name: Build sdist and wheel
+      - name: Build sdist and wheel (only when a release occurred)
+        if: steps.semrel.outputs.released == 'true'
         run: python -m build
 
-      # Publish to PyPI using OIDC Trusted Publisher (first success activates the pending publisher)
+      # Publish to PyPI using OIDC Trusted Publisher (only when a release occurred)
       - name: Publish to PyPI (Trusted Publisher)
+        if: steps.semrel.outputs.released == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          # environment: production   # <- uncomment if you specified an Environment name in PyPI Trusted Publisher
+          # environment: production   # uncomment if you configured a named environment in PyPI
 
