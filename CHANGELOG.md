@@ -1,12 +1,27 @@
 # CHANGELOG
 
 
-## v1.0.5 (2025-09-23)
+## v1.1.1 (2025-09-23)
+
+### Bug Fixes
+
+- **ci**: Align pyproject.toml versioning with semantic-release
+  ([`e09781c`](https://github.com/martindahlswe/ttx-cli/commit/e09781ca41626dcc0f5ba8f087ae6d60616bb77f))
+
+
+## v1.1.0 (2025-09-23)
 
 ### Bug Fixes
 
 - Added pyproject dependencies.
   ([`bf00e33`](https://github.com/martindahlswe/ttx-cli/commit/bf00e332397276bcf2a9e922b45b8ddd14708d30))
+
+- **ci**: Align pyproject.toml versioning with semantic-release
+  ([`2e09390`](https://github.com/martindahlswe/ttx-cli/commit/2e09390fdd64cd592e017870cc9a340bdeb8313b))
+
+Remove hardcoded version from pyproject.toml and switch to dynamic version management to avoid
+  mismatches between GitHub and PyPI releases. Ensures semantic-release controls version
+  consistently.
 
 ### Continuous Integration
 
