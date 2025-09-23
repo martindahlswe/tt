@@ -1,23 +1,21 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.18.0", "hatch-vcs>=0.4"]
 build-backend = "hatchling.build"
 
 [project]
 name = "ttx-cli"
 dynamic = ["version"]
 description = "Tiny tasks and time tracker"
-authors = [
-  { name="Martin Dahl", email="martindahl16@icloud.com" }
-]
+authors = [{ name = "Martin Dahl", email = "martindahl16@icloud.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "typer>=0.9.0",
-    "rich>=13.0.0",
-    "pyyaml>=6.0",
-    "textual>=0.58.0",
-    "click>=8.0",
+  "typer>=0.9.0",
+  "rich>=13.0.0",
+  "pyyaml>=6.0",
+  "textual>=0.58.0",
+  "click>=8.0",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +23,16 @@ dev = ["pytest", "ruff", "pyright", "textual-dev", "python-semantic-release"]
 
 [project.scripts]
 ttx = "ttx.cli:app"
+
+# Tell hatchling how to get the dynamic version
+[tool.hatch.version]
+source = "vcs"
+# Optional: if no tag is present (e.g. local dev), use this placeholder
+fallback-version = "0.0.0"
+
+# Optional: write a _version.py at build time for runtime introspection
+[tool.hatch.build.hooks.vcs]
+version-file = "ttx/_version.py"
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -35,8 +43,9 @@ exclude = [
   "/.vscode",
   ".*",
   "tests",
-  "*.md"
+  "*.md",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["ttx"]
+
