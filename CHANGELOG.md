@@ -1,12 +1,57 @@
 # CHANGELOG
 
 
+## v1.2.0 (2025-09-24)
+
+### Features
+
+- **cli**: Add `task add-subtask` command
+  ([`df2f337`](https://github.com/martindahlswe/ttx-cli/commit/df2f337e39fcc7e12ac6e731c2defe2cb9822f3c))
+
+- Introduced new subcommand `ttx task add-subtask` - Usage: `ttx task add-subtask <PARENT_ID>
+  "<TITLE>"` - Validates that the parent task exists before creating the subtask - Calls
+  `tasks.add(..., parent_id=...)` to persist relation - Prints confirmation with both new subtask ID
+  and parent ID
+
+This restores explicit subtask creation via CLI while keeping existing `task add` intact.
+
+- **cli**: Add `task tree` command to show nested tasks with logs
+  ([`99b3a6c`](https://github.com/martindahlswe/ttx-cli/commit/99b3a6c4c3c2a5058ec3236160cad8e4e33ad257))
+
+- Introduced new `ttx task tree` command - Displays tasks and subtasks in a hierarchical tree -
+  Preserves same columns as `task ls` - Includes per-entry log lines when not in `--compact` mode -
+  Supports same filters and options as `task ls` - Builds child map to nest subtasks under parents -
+  Keeps existing `task ls` behavior unchanged - Removes deprecated `task add-subtask` (subtasks are
+  created via `task add --parent-id`)
+
+This provides a unified way to explore tasks, subtasks, and their logs in the CLI.
+
+- **tasks**: Add support for hierarchical subtasks in CLI and TUI
+  ([`371365d`](https://github.com/martindahlswe/ttx-cli/commit/371365d944a4d41780b2c21fa32e8a25700b29c6))
+
+- Extend database schema with `parent_id` column on `tasks` table - Added migration helper
+  `apply_migrations()` - Ensure `parent_id` is created if missing - Update task creation to support
+  optional `parent_id` argument - Add `list_subtasks()` and `get_children()` helpers in `tasks.py` -
+  Enhance `task ls` CLI command: - New `--parent-id` option to show subtasks of a given task -
+  Default view now nests subtasks visually with indentation - Update TUI task list rendering: -
+  Build child map and recurse to render subtasks with indentation - Show subtasks directly beneath
+  their parents - Add utility `format_minutes()` to `timeparse.py` - Ensure schema/migrations run
+  safely on connect/init
+
+This commit introduces proper hierarchical task management while preserving backward compatibility.
+
+
 ## v1.1.1 (2025-09-23)
 
 ### Bug Fixes
 
 - **ci**: Align pyproject.toml versioning with semantic-release
   ([`e09781c`](https://github.com/martindahlswe/ttx-cli/commit/e09781ca41626dcc0f5ba8f087ae6d60616bb77f))
+
+### Chores
+
+- **build**: Configure hatch-vcs for dynamic version without bump
+  ([`47e283a`](https://github.com/martindahlswe/ttx-cli/commit/47e283ae9ea56a0afd36b51d5b534c506a5a692a))
 
 
 ## v1.1.0 (2025-09-23)
