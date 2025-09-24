@@ -393,6 +393,28 @@ def task_add(ctx: typer.Context, title: str):
     tid = tasks.add(title, ctx.obj.db_path)
     console.print(f"[green]task {tid} added[/green]: {title}")
 
+
+@task_app.command("add-subtask")
+@_guard_db_errors
+def task_add_subtask(
+    ctx: typer.Context,
+    parent_id: int = typer.Argument(..., help="Parent task ID"),
+    title: str = typer.Argument(..., help="Subtask title"),
+):
+    """
+    Create a subtask under an existing parent task.
+
+    Example:
+        ttx task add-subtask 5 "Write tests"
+    """
+    # Validate parent exists
+    parent = tasks.get(parent_id, ctx.obj.db_path)
+    if not parent:
+        console.print(f"[red]parent task {parent_id} not found[/red]"); raise typer.Exit(1)
+
+    tid = tasks.add(title, ctx.obj.db_path, parent_id=parent_id)
+    console.print(f"[green]subtask {tid} added[/green] under [bold]{parent_id}[/bold]: {title}")
+
 @task_app.command("edit")
 @_guard_db_errors
 def task_edit(
