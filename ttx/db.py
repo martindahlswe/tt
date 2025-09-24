@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS tasks(
   priority         INTEGER NOT NULL DEFAULT 0,
   due_date         TEXT,
   estimate_minutes INTEGER NOT NULL DEFAULT 0,
-  billable         INTEGER NOT NULL DEFAULT 0
+  billable         INTEGER NOT NULL DEFAULT 0,
+  parent_id        INTEGER REFERENCES tasks(id)
 );
 
 CREATE TABLE IF NOT EXISTS time_entries(
@@ -55,6 +56,8 @@ def connect(db_path: Path = DEFAULT_DB) -> sqlite3.Connection:
     db_path = Path(db_path)
     try:
         conn = sqlite3.connect(db_path)
+        conn.executescript(SCHEMA)
+        apply_migrations(conn)
     except sqlite3.Error as e:
         # propagate with clearer context
         raise sqlite3.OperationalError(f"Could not open database at '{db_path}': {e}") from e
@@ -86,6 +89,7 @@ def init(db_path: Path = DEFAULT_DB) -> Path:
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.executescript(SCHEMA)
+        apply_migrations(conn)
         _migrate(conn)
         conn.commit()
     return db_path
@@ -159,3 +163,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);")
     except sqlite3.Error:
         pass
+
+def apply_migrations(conn: sqlite3.Connection):
+    """
+    Apply post-schema migrations safely (idempotent).
+    - Add parent_id to tasks if not already present.
+    """
+    cursor = conn.execute("PRAGMA table_info(tasks);")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "parent_id" not in columns:
+        conn.execute("ALTER TABLE tasks ADD COLUMN parent_id INTEGER REFERENCES tasks(id);")
+
+
+from pathlib import Path
+import os
+
+def get_db_path() -> Path:
+    """
+    Returns the path to the default SQLite database.
+    """
+    return Path(os.getenv("TTX_DB_PATH", Path.home() / ".tt.sqlite3"))

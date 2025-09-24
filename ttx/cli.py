@@ -484,7 +484,38 @@ def task_ls(
     compact: bool = typer.Option(None, "--compact", help="Compact view (hide per-entry lines)"),
     limit: int = typer.Option(None, "--limit"),
     json_out: bool = typer.Option(False, "--json"),
+    parent_id: int = typer.Option(None, '--parent-id', help='Show sub-tasks of this task ID'),
 ):
+    from .tasks import list_tasks, get_children
+    from rich.table import Table
+    import typer
+    if parent_id is not None:
+        tasks = get_children(parent_id)
+    else:
+        tasks = list_tasks()
+        child_ids = set()
+        for task in tasks:
+            for child in get_children(task[0]):
+                child_ids.add(child[0])
+        tasks = [t for t in tasks if t[0] not in child_ids]  # filter out sub-tasks
+    table = Table(title=None)
+    table.add_column("ID", style="dim", width=4)
+    table.add_column("Title", width=80)
+    table.add_column("Status", width=8)
+    table.add_column("Pri", width=5)
+    table.add_column("Due")
+    def add_task_row(task, indent=''):
+        title = indent + task[1]
+        pri = str(task[5]) if len(task) > 5 else ''
+        due = str(task[6]) if len(task) > 6 else ''
+        table.add_row(str(task[0]), title, task[2], pri, due)
+        for child in get_children(task[0]):
+            add_task_row(child, indent=indent + '  ↳ ')
+    for task in tasks:
+        add_task_row(task)
+    from rich.console import Console
+    Console().print(table)
+    return
     used_compact = ctx.obj.list_compact if compact is None else compact
     used_limit = limit or ctx.obj.list_limit
     rows = tasks.list_tasks(status, ctx.obj.db_path, include_archived=all_, tags=tag or [], limit=used_limit)
@@ -847,3 +878,88 @@ def export(
     else:
         console.print("[red]Invalid format. Use --format md or csv[/red]")
         raise typer.Exit(1)
+
+@task_app.command("tree")
+@_guard_db_errors
+def task_tree(
+    ctx: typer.Context,
+    status: str = typer.Option(None, "--status", help="todo|doing|done"),
+    tag: List[str] = typer.Option(None, "--tag", help="Filter by tag (AND, repeatable)"),
+    since: str = typer.Option(None, "--since", help="today|yesterday|monday|week|last-week|month|ISO"),
+    until: str = typer.Option(None, "--until", help="now|ISO"),
+    all_: bool = typer.Option(False, "--all", help="Include archived"),
+    compact: bool = typer.Option(None, "--compact", help="Compact view (hide per-entry lines)"),
+    limit: int = typer.Option(None, "--limit"),
+):
+    """Show tasks as a tree with subtasks and (optionally) per-entry log lines."""
+    from rich.table import Table
+    from rich.console import Console
+    from .tasks import list_tasks, get_children, list_tags
+    used_compact = ctx.obj.list_compact if compact is None else compact
+    used_limit = limit or ctx.obj.list_limit
+
+    # Base rows and totals in the same way as task ls
+    rows = list_tasks(status, ctx.obj.db_path, include_archived=all_, tags=tag or [], limit=used_limit)
+    s, u = tparse.window(since, until)
+    totals = (logs.minutes_by_task_window(s, u, ctx.obj.db_path, rounding=ctx.obj.rounding)
+              if (s or u) else logs.minutes_by_task(ctx.obj.db_path, rounding=ctx.obj.rounding))
+
+    # Index rows and build child map
+    rows_by_id = {r[0]: r for r in rows}
+    order_ids = [r[0] for r in rows]
+    child_ids = set()
+    child_map: Dict[int, List[int]] = {tid: [] for tid in order_ids}
+    for tid in order_ids:
+        try:
+            children = get_children(tid, db_path=ctx.obj.db_path) or []
+        except Exception:
+            children = []
+        for c in children:
+            cid = c[0]
+            child_ids.add(cid)
+            child_map.setdefault(tid, []).append(cid)
+            if cid not in rows_by_id:
+                padded = tuple(c) + (None,) * (10 - len(c))
+                rows_by_id[cid] = padded
+
+    top_level_ids = [tid for tid in order_ids if tid not in child_ids]
+
+    table = Table(box=box.SIMPLE_HEAVY)
+    table.add_column("ID", justify="right")
+    table.add_column("Title")
+    table.add_column("Status")
+    table.add_column("Pri", justify="right")
+    table.add_column("Due")
+    table.add_column("Est", justify="right")
+    table.add_column("Bill")
+    table.add_column("Total")
+
+    def add_task_rows(tid: int, indent: str = "") -> None:
+        r = rows_by_id.get(tid)
+        if not r:
+            return
+        r = tuple(r) + (None,) * (10 - len(r))
+        _, title, st, _, _, _, prio, due, est, billable = r[:10]
+        bill = "✓" if billable else "•"
+        total = totals.get(tid, 0)
+        title_with_tags = title
+        tags = list_tags(tid, ctx.obj.db_path)
+        if tags:
+            title_with_tags += f"\n    tags: {', '.join(tags)}"
+        table.add_row(str(tid), indent + title_with_tags, st, str(prio or 0), due or "", f"{est or 0}", bill, fmt_minutes(total))
+
+        # Per-entry lines (like task ls) when not compact
+        if not used_compact:
+            entries = (logs.entry_minutes_for_task_window(tid, s, u, ctx.obj.db_path)
+                       if (s or u) else logs.entry_minutes_for_task(tid, ctx.obj.db_path))
+            for note, minutes in entries:
+                table.add_row("", indent + f"  - {note} - {fmt_minutes(minutes)}", "", "", "", "", "", "")
+
+        # Recurse
+        for cid in sorted(child_map.get(tid, [])):
+            add_task_rows(cid, indent + "  ↳ ")
+
+    for tid in sorted(top_level_ids):
+        add_task_rows(tid)
+
+    Console().print(table)

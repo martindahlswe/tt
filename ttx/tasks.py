@@ -6,15 +6,14 @@ from typing import Optional, List, Tuple
 from .db import connect, now_iso, DEFAULT_DB
 
 # -------- basics --------
-
-def add(title: str, db_path: Path = DEFAULT_DB) -> int:
+def add(title: str, db_path: Path = DEFAULT_DB, parent_id: Optional[int] = None) -> int:
     """Create a new task with title; returns new task id."""
     if not (title or '').strip():
         raise ValueError("title cannot be empty")
     with connect(db_path) as conn:
         cur = conn.execute(
-            "INSERT INTO tasks(title, status, created_at) VALUES (?, 'todo', ?)",
-            (title, now_iso()),
+            "INSERT INTO tasks(title, status, created_at, parent_id) VALUES (?, 'todo', ?, ?)",
+            (title, now_iso(), parent_id),
         )
         return int(cur.lastrowid)
 
@@ -191,3 +190,21 @@ def list_tags(task_id: int, db_path: Path = DEFAULT_DB) -> List[str]:
             (task_id,),
         ).fetchall()
         return [r[0] for r in rows]
+
+def list_subtasks(parent_id: int, db_path: Path = DEFAULT_DB) -> List[tuple]:
+    """Return all direct sub-tasks of a given task."""
+    with connect(db_path) as conn:
+        return conn.execute(
+            "SELECT id, title, status, created_at, completed_at, archived_at, priority, due_date, estimate_minutes, billable, parent_id FROM tasks WHERE parent_id = ? ORDER BY created_at",
+            (parent_id,),
+        ).fetchall()
+
+
+def get_children(parent_id: int, db_path: Path = DEFAULT_DB):
+    """Return all non-archived sub-tasks for a given parent task."""
+    with connect(db_path) as conn:
+        return conn.execute(
+            "SELECT id, title, status, created_at, completed_at, priority, due_date "
+            "FROM tasks WHERE parent_id=? AND archived_at IS NULL ORDER BY id",
+            (parent_id,)
+        ).fetchall()

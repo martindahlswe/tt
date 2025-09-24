@@ -10,6 +10,7 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+_version.py
 
 # Envs
 .env
