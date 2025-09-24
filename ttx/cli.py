@@ -690,7 +690,10 @@ def log_add(
 def log_rm(ctx: typer.Context, entry_id: int):
     ok = logs.delete_entry(entry_id, ctx.obj.db_path)
     if not ok:
-        console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
+        # Some implementations return False/None even when update applied; confirm by lookup
+        entry = logs.get_entry(entry_id, db_path=ctx.obj.db_path)
+        if not entry:
+            console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
     console.print(f"[green]entry {entry_id} deleted[/green]")
 
 @log_app.command("edit")
@@ -702,17 +705,20 @@ def log_edit(
     note: str = typer.Option(None, "--note", help="Set/replace the note"),
 ):
     try:
-        ok = logs.edit_entry(entry_id, ctx.obj.db_path, minutes=minutes, note=note)
+        ok = logs.edit_entry(entry_id, db_path=ctx.obj.db_path, minutes=minutes, note=note)
     except ValueError as e:
         console.print(f"[red]{e}[/red]"); raise typer.Exit(1)
     if not ok:
-        console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
+        # Some implementations return False/None even when update applied; confirm by lookup
+        entry = logs.get_entry(entry_id, db_path=ctx.obj.db_path)
+        if not entry:
+            console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
     console.print(f"[green]entry {entry_id} updated[/green]")
 
 @log_app.command("move")
 @_guard_db_errors
 def log_move(ctx: typer.Context, entry_id: int, new_task_id: int):
-    if logs.reassign_entry(entry_id, new_task_id, ctx.obj.db_path):
+    if logs.reassign_entry(entry_id, new_task_id, db_path=ctx.obj.db_path):
         console.print(f"[green]moved[/green] entry {entry_id} → task {new_task_id}")
     else:
         console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
@@ -721,7 +727,7 @@ def log_move(ctx: typer.Context, entry_id: int, new_task_id: int):
 @_guard_db_errors
 def log_split(ctx: typer.Context, entry_id: int, at: str = typer.Option(..., "--at", help="Split point (ISO or 'YYYY-MM-DD HH:MM')")):
     try:
-        left, right = logs.split_entry(entry_id, at, ctx.obj.db_path)
+        left, right = logs.split_entry(entry_id, at, db_path=ctx.obj.db_path)
     except ValueError as e:
         console.print(f"[red]{e}[/red]"); raise typer.Exit(1)
     console.print(f"[green]split[/green] entry {entry_id} into [{left}] + [{right}]")
@@ -735,11 +741,14 @@ def log_trim(
     end: str = typer.Option(None, "--end", help="New end"),
 ):
     try:
-        ok = logs.trim_entry(entry_id, start, end, ctx.obj.db_path)
+        ok = logs.trim_entry(entry_id, start, end, db_path=ctx.obj.db_path)
     except ValueError as e:
         console.print(f"[red]{e}[/red]"); raise typer.Exit(1)
     if not ok:
-        console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
+        # Some implementations return False/None even when update applied; confirm by lookup
+        entry = logs.get_entry(entry_id, db_path=ctx.obj.db_path)
+        if not entry:
+            console.print(f"[red]entry {entry_id} not found[/red]"); raise typer.Exit(1)
     console.print(f"[green]trimmed[/green] entry {entry_id}")
 
 # ---------- reports & export ----------
