@@ -472,3 +472,15 @@ def reassign_entry(entry_id: int, new_task_id: int, db_path: Path) -> bool:
             raise ValueError(f"task {new_task_id} not found")
         cur = conn.execute("UPDATE time_entries SET task_id=? WHERE id=?", (new_task_id, entry_id))
         return cur.rowcount > 0
+
+def get_entry(entry_id: int, db_path: Path):
+    """
+    Return a single time entry by id.
+    Shape: (id, task_id, start, end, note)
+    """
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id, task_id, start, end, note FROM time_entries WHERE id = ?",
+            (entry_id,),
+        ).fetchone()
+        return row
